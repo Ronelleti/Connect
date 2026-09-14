@@ -443,6 +443,84 @@ select:hover {
   text-transform: uppercase;
 }
 
+.current-shift-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-right: 4px solid var(--blue);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+
+.current-shift-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--blue-soft);
+  color: var(--blue);
+  flex: 0 0 auto;
+}
+
+.current-shift-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.current-shift-copy strong {
+  font-size: 14px;
+}
+
+.current-shift-copy > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.current-shift-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.current-shift-people > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--employee-color);
+}
+
+.current-shift-banner.morning .current-shift-icon {
+  background: #eff7ed;
+  color: #4d8149;
+}
+
+.current-shift-banner.evening .current-shift-icon {
+  background: #fff8e5;
+  color: #a57806;
+}
+
+.current-shift-banner.night .current-shift-icon {
+  background: #fff1f2;
+  color: #b91820;
+}
+
+.current-shift-banner.unfilled {
+  border-right-color: var(--red);
+}
+
+.current-shift-banner.unfilled .current-shift-icon {
+  background: #fde8e8;
+  color: var(--red);
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -2096,6 +2174,28 @@ html[data-theme="dark"] {
 [data-theme="dark"] .cell-unavailable-names > span {
   background: #251a20;
   color: #f4bdc1;
+}
+
+[data-theme="dark"] .current-shift-banner {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .current-shift-banner.morning .current-shift-icon {
+  background: #19291f;
+}
+
+[data-theme="dark"] .current-shift-banner.evening .current-shift-icon {
+  background: #2b2619;
+}
+
+[data-theme="dark"] .current-shift-banner.night .current-shift-icon {
+  background: #2d1d22;
+}
+
+[data-theme="dark"] .current-shift-banner.unfilled .current-shift-icon {
+  background: #311e24;
+  color: #f3a0a6;
 }
 
 [data-theme="dark"] .shift-worker-picker,

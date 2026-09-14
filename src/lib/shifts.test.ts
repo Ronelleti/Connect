@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SHIFT_DEFINITIONS,
   calculateSummaries,
+  getCurrentShiftSlot,
   getRestWarnings,
   validateAssignment
 } from "./shifts";
@@ -188,6 +189,44 @@ describe("shift rules", () => {
     expect(validation.warnings).toContainEqual(
       expect.objectContaining({ code: "AVAILABILITY_BLOCKED" })
     );
+  });
+
+  it("identifies the current shift slot from the time of day", () => {
+    // 2026-07-19 is a Sunday; Israel is UTC+3 in July.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T10:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "MORNING"
+    });
+    expect(getCurrentShiftSlot(new Date("2026-07-19T13:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "EVENING"
+    });
+    expect(getCurrentShiftSlot(new Date("2026-07-19T20:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "NIGHT"
+    });
+  });
+
+  it("keeps a night shift on its starting day after midnight rolls the calendar date over", () => {
+    // Local time is 2026-07-20T02:00, but the night shift started on Sunday 2026-07-19.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T23:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "NIGHT"
+    });
+  });
+
+  it("carries a night shift across into the previous week when it starts on a Saturday", () => {
+    // Local time is 2026-07-19T03:00 (Sunday), but the night shift started on
+    // Saturday 2026-07-18, which belongs to the previous week.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T00:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-12",
+      dayIndex: 6,
+      shiftType: "NIGHT"
+    });
   });
 
   it("summarizes shifts and work hours per employee", () => {

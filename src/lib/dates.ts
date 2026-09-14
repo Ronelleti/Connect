@@ -35,6 +35,28 @@ export function addDays(dateOnly: string, days: number): string {
   return toDateOnly(new Date(date.getTime() + days * DAY_MS));
 }
 
+export function diffDays(fromDateOnly: string, toDateOnly: string): number {
+  const from = new Date(`${fromDateOnly}T00:00:00.000Z`).getTime();
+  const to = new Date(`${toDateOnly}T00:00:00.000Z`).getTime();
+  return Math.round((to - from) / DAY_MS);
+}
+
+export function getScheduleTimeParts(date = new Date()): { dateOnly: string; hour: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SCHEDULE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  return { dateOnly: `${year}-${month}-${day}`, hour };
+}
+
 export function formatHebrewDate(dateOnly: string): string {
   return new Intl.DateTimeFormat("he-IL", {
     day: "2-digit",

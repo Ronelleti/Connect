@@ -29,6 +29,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { AssignmentUndoToast } from "./AssignmentUndoToast";
+import { CurrentShiftBanner } from "./CurrentShiftBanner";
 import { EmployeeEditorDialog, type EmployeeEditor } from "./EmployeeEditorDialog";
 import { ShiftWorkerPicker } from "./ShiftWorkerPicker";
 import { ThemeToggle } from "./ThemeToggle";
@@ -651,6 +652,8 @@ export function ScheduleDashboard({
         </header>
 
         <main className="scheduler-page">
+          <CurrentShiftBanner />
+
           <section className="schedule-toolbar" id="schedule-section">
             <div>
               <p className="eyebrow">Wecomconnect</p>

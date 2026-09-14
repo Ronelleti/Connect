@@ -1,3 +1,4 @@
+import { addDays, diffDays, getScheduleTimeParts, getSundayWeekStart } from "./dates";
 import type {
   AssignmentInput,
   AssignmentIssue,
@@ -52,6 +53,22 @@ const MIN_REST_HOURS = 8;
 
 export function getShiftTypes(): ShiftType[] {
   return SHIFT_ORDER;
+}
+
+export function getCurrentShiftSlot(date = new Date()): {
+  weekStart: string;
+  dayIndex: number;
+  shiftType: ShiftType;
+} {
+  const { dateOnly, hour } = getScheduleTimeParts(date);
+  // A night shift that started at 23:00 the previous day is still that day's night
+  // shift until 07:00, even though the calendar date has already rolled over.
+  const shiftDateOnly = hour < 7 ? addDays(dateOnly, -1) : dateOnly;
+  const shiftType: ShiftType = hour < 7 || hour >= 23 ? "NIGHT" : hour < 15 ? "MORNING" : "EVENING";
+  const weekStart = getSundayWeekStart(new Date(`${shiftDateOnly}T12:00:00.000Z`));
+  const dayIndex = diffDays(weekStart, shiftDateOnly);
+
+  return { weekStart, dayIndex, shiftType };
 }
 
 export function getShiftWindow(weekStart: string, dayIndex: number, shiftType: ShiftType) {
