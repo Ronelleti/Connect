@@ -47,7 +47,7 @@ export const SHIFT_DEFINITIONS: Record<
 };
 
 const SHIFT_ORDER: ShiftType[] = ["MORNING", "EVENING", "NIGHT"];
-const MAX_WEEKLY_SHIFTS = 6;
+export const MAX_WEEKLY_SHIFTS = 6;
 const MIN_REST_HOURS = 8;
 
 export function getShiftTypes(): ShiftType[] {

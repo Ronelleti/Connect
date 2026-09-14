@@ -372,6 +372,40 @@ export async function deleteAssignment(id: string) {
   await query("DELETE FROM shift_assignments WHERE id = $1", [id]);
 }
 
+export async function bulkCreateAssignments(
+  weekStart: string,
+  inputs: { employeeId: string; dayIndex: number; shiftType: ShiftType }[]
+) {
+  if (inputs.length === 0) {
+    return [];
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const created: AssignmentRow[] = [];
+    for (const input of inputs) {
+      const result = await client.query<AssignmentRow>(
+        `INSERT INTO shift_assignments (employee_id, week_start, day_index, shift_type, notes)
+         VALUES ($1, $2, $3, $4, '')
+         ON CONFLICT (week_start, day_index, shift_type) DO NOTHING
+         RETURNING *`,
+        [input.employeeId, weekStart, input.dayIndex, input.shiftType]
+      );
+      if (result.rows[0]) {
+        created.push(result.rows[0]);
+      }
+    }
+    await client.query("COMMIT");
+    return created.map(toAssignment);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function createAvailabilityBlock(input: {
   employeeId: string;
   weekStart: string;

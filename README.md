@@ -63,6 +63,7 @@ the first manager is bootstrapped once with the production-safe admin script.
 - Managers can export a UTF-8 CSV table containing employee, day, date, shift, time, and weekly totals.
 - Swap requests can be reviewed by the target employee and manager in either order. A rejection closes the request immediately; after both approve, the assignment is applied automatically.
 - Only one active swap request is allowed per source assignment; older duplicate requests are closed automatically when the database is migrated.
+- Managers can auto-generate a week's schedule with one click. The generator only fills currently empty shifts (existing assignments are left untouched) and, for each empty shift, prefers an employee who marked it as preferred, honors `UNAVAILABLE`/`חופש` blocks, and never exceeds an employee's weekly shift cap. It never schedules the same employee for two shifts in a row, and requires at least two other shifts (16h) of rest between any two of an employee's shifts; only when no employee can otherwise cover a shift does it relax that rest rule as a last resort. Any shift nobody can cover is left unfilled and reported for manual assignment.
 
 ## Security
 
