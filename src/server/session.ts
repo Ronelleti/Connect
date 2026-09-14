@@ -1,11 +1,7 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import type { Role, User } from "@/lib/types";
+import { getEncryptionKey } from "./secretKey";
 
 const COOKIE_NAME = "wecomconnect_session";
 const SESSION_VERSION = "v1";
@@ -113,17 +109,3 @@ export async function clearSessionCookie() {
   });
 }
 
-function getAuthSecret(): string {
-  const configuredSecret = process.env.AUTH_SECRET?.trim();
-  if (configuredSecret) {
-    return configuredSecret;
-  }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("AUTH_SECRET is required in production");
-  }
-  return "development-only-secret";
-}
-
-function getEncryptionKey(): Buffer {
-  return createHash("sha256").update(getAuthSecret()).digest();
-}

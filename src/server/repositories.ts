@@ -449,36 +449,37 @@ export async function deleteAvailabilityBlock(id: string) {
   await query("DELETE FROM availability_blocks WHERE id = $1", [id]);
 }
 
+const SWAP_JOIN_SQL = `
+  SELECT swaps.*,
+         COALESCE(swaps.requester_employee_id_snapshot, requester_assignment.employee_id)
+           AS requester_employee_id,
+         COALESCE(swaps.requester_employee_name_snapshot, requester.name)
+           AS requester_employee_name,
+         COALESCE(swaps.target_employee_name_snapshot, target.name)
+           AS target_employee_name,
+         COALESCE(swaps.week_start_snapshot, requester_assignment.week_start) AS week_start,
+         COALESCE(swaps.day_index_snapshot, requester_assignment.day_index) AS day_index,
+         COALESCE(swaps.shift_type_snapshot, requester_assignment.shift_type) AS shift_type,
+         COALESCE(swaps.target_day_index_snapshot, target_assignment.day_index)
+           AS target_day_index,
+         COALESCE(swaps.target_shift_type_snapshot, target_assignment.shift_type)
+           AS target_shift_type
+  FROM shift_swap_requests swaps
+  LEFT JOIN shift_assignments requester_assignment
+    ON requester_assignment.id = swaps.requester_assignment_id
+  LEFT JOIN employees requester ON requester.id = requester_assignment.employee_id
+  LEFT JOIN employees target ON target.id = swaps.target_employee_id
+  LEFT JOIN shift_assignments target_assignment
+    ON target_assignment.id = swaps.target_assignment_id
+`;
+
 export async function listSwapRequests() {
-  const rows = await query<SwapRow>(
-    `SELECT swaps.*,
-            COALESCE(swaps.requester_employee_id_snapshot, requester_assignment.employee_id)
-              AS requester_employee_id,
-            COALESCE(swaps.requester_employee_name_snapshot, requester.name)
-              AS requester_employee_name,
-            COALESCE(swaps.target_employee_name_snapshot, target.name)
-              AS target_employee_name,
-            COALESCE(swaps.week_start_snapshot, requester_assignment.week_start) AS week_start,
-            COALESCE(swaps.day_index_snapshot, requester_assignment.day_index) AS day_index,
-            COALESCE(swaps.shift_type_snapshot, requester_assignment.shift_type) AS shift_type,
-            COALESCE(swaps.target_day_index_snapshot, target_assignment.day_index)
-              AS target_day_index,
-            COALESCE(swaps.target_shift_type_snapshot, target_assignment.shift_type)
-              AS target_shift_type
-     FROM shift_swap_requests swaps
-     LEFT JOIN shift_assignments requester_assignment
-       ON requester_assignment.id = swaps.requester_assignment_id
-     LEFT JOIN employees requester ON requester.id = requester_assignment.employee_id
-     LEFT JOIN employees target ON target.id = swaps.target_employee_id
-     LEFT JOIN shift_assignments target_assignment
-       ON target_assignment.id = swaps.target_assignment_id
-     ORDER BY swaps.created_at DESC`
-  );
+  const rows = await query<SwapRow>(`${SWAP_JOIN_SQL} ORDER BY swaps.created_at DESC`);
   return rows.map(toSwap);
 }
 
 export async function findSwapRequest(id: string) {
-  const [row] = await query<SwapRow>("SELECT * FROM shift_swap_requests WHERE id = $1", [id]);
+  const [row] = await query<SwapRow>(`${SWAP_JOIN_SQL} WHERE swaps.id = $1`, [id]);
   return row ? toSwap(row) : null;
 }
 
@@ -488,7 +489,7 @@ export async function createSwapRequest(input: {
   targetAssignmentId: string | null;
 }) {
   try {
-    const [swap] = await query<SwapRow>(
+    const [swap] = await query<{ id: string }>(
       `INSERT INTO shift_swap_requests
         (requester_assignment_id, target_employee_id, target_assignment_id,
          requester_employee_id_snapshot, requester_employee_name_snapshot,
@@ -504,10 +505,10 @@ export async function createSwapRequest(input: {
        JOIN employees target ON target.id = $2
        LEFT JOIN shift_assignments target_assignment ON target_assignment.id = $3
        WHERE requester_assignment.id = $1
-       RETURNING *`,
+       RETURNING id`,
       [input.requesterAssignmentId, input.targetEmployeeId, input.targetAssignmentId]
     );
-    return swap ? toSwap(swap) : null;
+    return swap ? findSwapRequest(swap.id) : null;
   } catch (error) {
     if ((error as { code?: string }).code === "23505") {
       return null;
