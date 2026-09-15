@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -11,6 +12,8 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  FileText,
+  LayoutDashboard,
   LogOut,
   MessageSquare,
   Pencil,
@@ -588,6 +591,9 @@ export function ScheduleDashboard({
         <div className="rail-logo">
           <Image src="/wecom-logo.svg" alt="wecom" width={92} height={42} priority />
         </div>
+        <Link href="/" title="הדשבורד שלי" className="rail-button">
+          <LayoutDashboard size={20} />
+        </Link>
         <button
           title="לוח משמרות"
           className={`rail-button ${activeSection === "schedule" ? "active" : ""}`}
@@ -616,6 +622,9 @@ export function ScheduleDashboard({
         >
           <Repeat2 size={20} />
         </button>
+        <Link href="/files" title="קבצים" className="rail-button">
+          <FileText size={20} />
+        </Link>
       </aside>
 
       <div className="workspace">

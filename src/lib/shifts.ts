@@ -1,4 +1,4 @@
-import { addDays, diffDays, getScheduleTimeParts, getSundayWeekStart } from "./dates";
+import { addDays, diffDays, getScheduleTimeParts, getSundayWeekStart, zonedTimeToUtc } from "./dates";
 import type {
   AssignmentInput,
   AssignmentIssue,
@@ -53,6 +53,15 @@ const MIN_REST_HOURS = 8;
 
 export function getShiftTypes(): ShiftType[] {
   return SHIFT_ORDER;
+}
+
+// Unlike getShiftWindow (which treats "07:00" as literal UTC and is only ever used for
+// relative rest-gap math between two such windows), this returns the shift's true
+// real-world start instant in Israel time, for comparisons against an actual "now".
+export function getShiftStartInstant(weekStart: string, dayIndex: number, shiftType: ShiftType): Date {
+  const absoluteDate = addDays(weekStart, dayIndex);
+  const [hour, minute] = SHIFT_DEFINITIONS[shiftType].startsAt.split(":").map(Number);
+  return zonedTimeToUtc(absoluteDate, hour, minute);
 }
 
 export function getCurrentShiftSlot(date = new Date()): {

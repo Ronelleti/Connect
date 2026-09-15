@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
+import { getAvailabilityWeekStart, getSundayWeekStart } from "@/lib/dates";
 import { getCurrentUser } from "@/server/session";
 import { findUserById, toUser } from "@/server/repositories";
-import { MyDashboard } from "@/components/MyDashboard";
+import { ScheduleDashboard } from "@/components/ScheduleDashboard";
 
-export default async function HomePage() {
+export default async function SchedulePage() {
   const sessionUser = await getCurrentUser();
 
   if (!sessionUser) {
@@ -15,5 +16,11 @@ export default async function HomePage() {
   }
   const user = toUser(userRow);
 
-  return <MyDashboard currentUser={user} />;
+  return (
+    <ScheduleDashboard
+      currentUser={user}
+      initialWeekStart={getSundayWeekStart()}
+      initialAvailabilityWeekStart={getAvailabilityWeekStart()}
+    />
+  );
 }

@@ -18,12 +18,16 @@
     "db:create-admin": "node scripts/create-admin.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.125.0",
     "@netlify/database": "^1.1.0",
+    "exceljs": "^4.4.0",
     "html2canvas-pro": "2.3.3",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.3",
     "next": "16.3.0",
     "nodemailer": "^10.0.9",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"

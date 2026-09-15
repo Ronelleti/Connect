@@ -4,6 +4,7 @@ import {
   calculateSummaries,
   getCurrentShiftSlot,
   getRestWarnings,
+  getShiftStartInstant,
   validateAssignment
 } from "./shifts";
 import type { AvailabilityBlock, Employee, ShiftAssignment } from "./types";
@@ -227,6 +228,24 @@ describe("shift rules", () => {
       dayIndex: 6,
       shiftType: "NIGHT"
     });
+  });
+
+  it("computes a shift's true real-world start instant, not a literal-UTC one", () => {
+    // 2026-07-19 is in Israel's DST (UTC+3): 07:00 local is 04:00 UTC, not 07:00 UTC.
+    expect(getShiftStartInstant("2026-07-19", 0, "MORNING").toISOString()).toBe(
+      "2026-07-19T04:00:00.000Z"
+    );
+    // 2026-01-04 is Israel standard time (UTC+2): 07:00 local is 05:00 UTC.
+    expect(getShiftStartInstant("2026-01-04", 0, "MORNING").toISOString()).toBe(
+      "2026-01-04T05:00:00.000Z"
+    );
+  });
+
+  it("rolls a shift start instant onto the correct absolute day", () => {
+    // Day index 2 on a Sunday week-start lands on Tuesday.
+    expect(getShiftStartInstant("2026-07-19", 2, "EVENING").toISOString()).toBe(
+      "2026-07-21T12:00:00.000Z"
+    );
   });
 
   it("summarizes shifts and work hours per employee", () => {

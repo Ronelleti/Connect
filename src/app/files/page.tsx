@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/server/session";
 import { findUserById, toUser } from "@/server/repositories";
-import { MyDashboard } from "@/components/MyDashboard";
+import { FilesLibrary } from "@/components/FilesLibrary";
 
-export default async function HomePage() {
+export default async function FilesPage() {
   const sessionUser = await getCurrentUser();
 
   if (!sessionUser) {
@@ -15,5 +15,5 @@ export default async function HomePage() {
   }
   const user = toUser(userRow);
 
-  return <MyDashboard currentUser={user} />;
+  return <FilesLibrary currentUser={user} />;
 }

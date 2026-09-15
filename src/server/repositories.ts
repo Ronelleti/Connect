@@ -3,7 +3,9 @@ import type {
   AvailabilityBlock,
   AvailabilityStatus,
   Employee,
+  FileQuestion,
   Role,
+  SharedFile,
   ShiftAssignment,
   ShiftSwapRequest,
   ShiftType,
@@ -717,6 +719,169 @@ function toSwap(row: SwapRow): ShiftSwapRequest {
     status: row.status,
     employeeDecidedAt: row.employee_decided_at,
     managerDecidedAt: row.manager_decided_at,
+    createdAt: row.created_at
+  };
+}
+
+export async function countEmployeeShiftsBetween(
+  employeeId: string,
+  fromDateOnly: string,
+  toDateOnly: string
+): Promise<number> {
+  const [row] = await query<{ shift_count: number }>(
+    `SELECT count(*)::int AS shift_count
+     FROM shift_assignments
+     WHERE employee_id = $1
+       AND (week_start::date + day_index) >= $2::date
+       AND (week_start::date + day_index) < $3::date`,
+    [employeeId, fromDateOnly, toDateOnly]
+  );
+  return row?.shift_count ?? 0;
+}
+
+export async function listUpcomingAssignments(
+  employeeId: string,
+  fromDateOnly: string,
+  limit: number
+) {
+  const rows = await query<AssignmentRow>(
+    `SELECT * FROM shift_assignments
+     WHERE employee_id = $1
+       AND (week_start::date + day_index) >= $2::date
+     ORDER BY (week_start::date + day_index) ASC,
+       CASE shift_type WHEN 'MORNING' THEN 0 WHEN 'EVENING' THEN 1 WHEN 'NIGHT' THEN 2 END ASC
+     LIMIT $3`,
+    [employeeId, fromDateOnly, limit]
+  );
+  return rows.map(toAssignment);
+}
+
+interface SharedFileRow {
+  id: string;
+  uploaded_by_user_id: string | null;
+  uploaded_by_name: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  extracted_text: string;
+  created_at: string;
+}
+
+const SHARED_FILE_META_COLUMNS =
+  "id, uploaded_by_user_id, uploaded_by_name, filename, content_type, size_bytes, extracted_text, created_at";
+
+export async function createSharedFile(input: {
+  uploadedByUserId: string;
+  uploadedByName: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  extractedText: string;
+  data: Buffer;
+}) {
+  const [row] = await query<SharedFileRow>(
+    `INSERT INTO shared_files
+      (uploaded_by_user_id, uploaded_by_name, filename, content_type, size_bytes, extracted_text, data)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING ${SHARED_FILE_META_COLUMNS}`,
+    [
+      input.uploadedByUserId,
+      input.uploadedByName,
+      input.filename,
+      input.contentType,
+      input.sizeBytes,
+      input.extractedText,
+      input.data
+    ]
+  );
+  return toSharedFile(row);
+}
+
+export async function listSharedFiles() {
+  const rows = await query<SharedFileRow>(
+    `SELECT ${SHARED_FILE_META_COLUMNS} FROM shared_files ORDER BY created_at DESC`
+  );
+  return rows.map(toSharedFile);
+}
+
+export async function findSharedFileMeta(id: string) {
+  const [row] = await query<SharedFileRow>(
+    `SELECT ${SHARED_FILE_META_COLUMNS} FROM shared_files WHERE id = $1`,
+    [id]
+  );
+  return row ? toSharedFile(row) : null;
+}
+
+export async function findSharedFileWithData(id: string) {
+  const [row] = await query<SharedFileRow & { data: Buffer }>(
+    "SELECT * FROM shared_files WHERE id = $1",
+    [id]
+  );
+  if (!row) {
+    return null;
+  }
+  return { meta: toSharedFile(row), data: row.data, extractedText: row.extracted_text };
+}
+
+export async function deleteSharedFile(id: string) {
+  await query("DELETE FROM shared_files WHERE id = $1", [id]);
+}
+
+function toSharedFile(row: SharedFileRow): SharedFile {
+  return {
+    id: row.id,
+    uploadedByUserId: row.uploaded_by_user_id,
+    uploadedByName: row.uploaded_by_name,
+    filename: row.filename,
+    contentType: row.content_type,
+    sizeBytes: row.size_bytes,
+    hasExtractedText: row.extracted_text.trim().length > 0,
+    createdAt: row.created_at
+  };
+}
+
+interface FileQuestionRow {
+  id: string;
+  file_id: string;
+  asked_by_user_id: string | null;
+  asked_by_name: string;
+  question: string;
+  answer: string;
+  created_at: string;
+}
+
+export async function createFileQuestion(input: {
+  fileId: string;
+  askedByUserId: string;
+  askedByName: string;
+  question: string;
+  answer: string;
+}) {
+  const [row] = await query<FileQuestionRow>(
+    `INSERT INTO file_questions (file_id, asked_by_user_id, asked_by_name, question, answer)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [input.fileId, input.askedByUserId, input.askedByName, input.question, input.answer]
+  );
+  return toFileQuestion(row);
+}
+
+export async function listFileQuestions(fileId: string) {
+  const rows = await query<FileQuestionRow>(
+    "SELECT * FROM file_questions WHERE file_id = $1 ORDER BY created_at ASC",
+    [fileId]
+  );
+  return rows.map(toFileQuestion);
+}
+
+function toFileQuestion(row: FileQuestionRow): FileQuestion {
+  return {
+    id: row.id,
+    fileId: row.file_id,
+    askedByUserId: row.asked_by_user_id,
+    askedByName: row.asked_by_name,
+    question: row.question,
+    answer: row.answer,
     createdAt: row.created_at
   };
 }
