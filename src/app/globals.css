@@ -2830,3 +2830,242 @@ html[data-theme="dark"] {
     max-height: calc(100vh - 170px);
   }
 }
+
+.requests-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  border: 1px solid #b7d2f1;
+  border-radius: 8px;
+  background: var(--blue-soft);
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
+.requests-message button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.requests-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.requests-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.requests-section h2 svg {
+  color: var(--blue);
+}
+
+.requests-section h3 {
+  margin: 20px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.requests-form {
+  display: grid;
+  gap: 12px;
+}
+
+.requests-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.requests-form select,
+.requests-form input {
+  width: 100%;
+}
+
+.requests-date-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.requests-form .primary-button {
+  gap: 7px;
+  padding: 0 16px;
+}
+
+.requests-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.requests-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 11px 4px;
+}
+
+.requests-item:last-child {
+  border-bottom: 0;
+}
+
+.requests-item > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.requests-item strong {
+  font-size: 14px;
+}
+
+.requests-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.requests-list.compact .requests-item {
+  padding: 8px 4px;
+}
+
+.requests-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.requests-actions button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.requests-actions button.approve {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.requests-actions button.decline {
+  background: #fff0f1;
+  color: var(--red);
+}
+
+.requests-actions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.request-status {
+  justify-self: start;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #536174;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.request-status.OPEN,
+.request-status.PENDING,
+.request-status.PENDING_MANAGER {
+  background: #fff4d9;
+  color: #875c00;
+}
+
+.request-status.APPROVED {
+  background: #e9f6e7;
+  color: #397834;
+}
+
+.request-status.DECLINED,
+.request-status.DECLINED_BY_MANAGER {
+  background: #fff0f1;
+  color: #aa2630;
+}
+
+[data-theme="dark"] .requests-message {
+  border-color: #3f6894;
+}
+
+[data-theme="dark"] .requests-actions button.decline {
+  background: #382126;
+  color: #f09aa0;
+}
+
+[data-theme="dark"] .request-status {
+  background: #29323f;
+  color: #c2cad5;
+}
+
+[data-theme="dark"] .request-status.OPEN,
+[data-theme="dark"] .request-status.PENDING,
+[data-theme="dark"] .request-status.PENDING_MANAGER {
+  background: #3b311c;
+  color: #f1cf77;
+}
+
+[data-theme="dark"] .request-status.APPROVED {
+  background: #203322;
+  color: #91ce87;
+}
+
+[data-theme="dark"] .request-status.DECLINED,
+[data-theme="dark"] .request-status.DECLINED_BY_MANAGER {
+  background: #382126;
+  color: #f09aa0;
+}
+
+@media (max-width: 960px) {
+  .requests-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  /* The phone bottom bar holds up to eight buttons; let them shrink to fit. */
+  .icon-rail .rail-button {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 48px;
+  }
+
+  .requests-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .requests-actions {
+    justify-content: flex-start;
+  }
+}

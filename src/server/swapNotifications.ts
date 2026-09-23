@@ -71,13 +71,25 @@ function describeSwapShift(swap: ShiftSwapRequest): string {
   )}`;
 }
 
+// The target's shift in a two-way swap, or null when the requester only hands theirs over.
+function describeTargetShift(swap: ShiftSwapRequest): string | null {
+  if (!swap.weekStart || swap.targetDayIndex == null || !swap.targetShiftType) {
+    return null;
+  }
+  return `משמרת ${SHIFT_DEFINITIONS[swap.targetShiftType].label} ב-${formatHebrewDate(
+    addDays(swap.weekStart, swap.targetDayIndex)
+  )}`;
+}
+
 // A new request goes to the employee being asked to swap.
 export async function notifySwapRequested(created: ShiftSwapRequest) {
   // Reload so the names and shift details (joined columns) are present.
   const swap = (await findSwapRequest(created.id)) ?? created;
   await notifyUsers([await findUserIdForEmployee(swap.targetEmployeeId)], {
     title: "בקשת החלפת משמרת",
-    body: `${swap.requesterEmployeeName ?? "עובד/ת"} מבקש/ת להחליף איתך את ${describeSwapShift(swap)}. יש לאשר או לדחות.`,
+    body: describeTargetShift(swap)
+      ? `${swap.requesterEmployeeName ?? "עובד/ת"} מבקש/ת להחליף: ${describeSwapShift(swap)} שלו/ה תמורת ${describeTargetShift(swap)} שלך. יש לאשר או לדחות.`
+      : `${swap.requesterEmployeeName ?? "עובד/ת"} מבקש/ת להעביר אליך את ${describeSwapShift(swap)}. יש לאשר או לדחות.`,
     link: SWAPS_LINK
   });
 }
@@ -94,16 +106,21 @@ export async function notifySwapDecision(decided: ShiftSwapRequest, action: Swap
   const requesterName = swap.requesterEmployeeName ?? "העובד/ת המבקש/ת";
   const targetName = swap.targetEmployeeName ?? "העובד/ת";
   const shift = describeSwapShift(swap);
+  const targetShift = describeTargetShift(swap);
 
   if (swap.status === "APPROVED") {
     await notifyUsers([requesterUserId], {
       title: "ההחלפה אושרה",
-      body: `המנהל אישר את ההחלפה. ${shift} עברה ל${targetName}.`,
+      body: targetShift
+        ? `המנהל אישר את ההחלפה עם ${targetName}: ${shift} עברה ל${targetName}, ו${targetShift} עכשיו שלך.`
+        : `המנהל אישר את ההחלפה. ${shift} עברה ל${targetName}.`,
       link: SWAPS_LINK
     });
     await notifyUsers([targetUserId], {
       title: "ההחלפה אושרה",
-      body: `המנהל אישר את ההחלפה עם ${requesterName}. ${shift} שלך עכשיו.`,
+      body: targetShift
+        ? `המנהל אישר את ההחלפה עם ${requesterName}: ${shift} עכשיו שלך, ו${targetShift} עברה ל${requesterName}.`
+        : `המנהל אישר את ההחלפה עם ${requesterName}. ${shift} שלך עכשיו.`,
       link: SWAPS_LINK
     });
     return;

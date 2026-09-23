@@ -13,6 +13,7 @@ import {
   Clock3,
   Download,
   FileText,
+  Inbox,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -624,6 +625,9 @@ export function ScheduleDashboard({
         >
           <Repeat2 size={20} />
         </button>
+        <Link href="/requests" title="בקשות" className="rail-button">
+          <Inbox size={20} />
+        </Link>
         <Link href="/salary" title="הערכת שכר" className="rail-button">
           <Wallet size={20} />
         </Link>
