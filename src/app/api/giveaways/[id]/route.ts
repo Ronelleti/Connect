@@ -81,6 +81,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return jsonError("המסירה כבר טופלה.", 409);
     }
 
+    if (
+      action === "approve" &&
+      getShiftStartInstant(giveaway.weekStart, giveaway.dayIndex, giveaway.shiftType) <= new Date()
+    ) {
+      return jsonError("המשמרת כבר התחילה, אי אפשר לאשר את המסירה.", 409);
+    }
+
     if (action === "approve") {
       const taker = employees.find((item) => item.id === giveaway.takenByEmployeeId);
       if (!taker) {

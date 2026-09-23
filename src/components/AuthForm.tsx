@@ -26,7 +26,8 @@ export function AuthForm() {
     setIsSubmitting(false);
 
     if (!response.ok) {
-      const body = await response.json();
+      // A server crash can return an empty body; show a generic error instead of throwing.
+      const body = await response.json().catch(() => ({}));
       setError(body.error ?? "הפעולה נכשלה.");
       return;
     }
@@ -44,7 +45,8 @@ export function AuthForm() {
           <span>connect</span>
         </div>
         <h1>כניסה למערכת</h1>
-        <form onSubmit={handleSubmit} className="auth-form">
+        {/* method="post" so that if scripts fail to load, the browser never puts the password in the URL. */}
+        <form method="post" onSubmit={handleSubmit} className="auth-form">
           <label>
             אימייל או שם משתמש
             <input

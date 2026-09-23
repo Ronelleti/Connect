@@ -1,4 +1,5 @@
 import { addDays, diffDays } from "@/lib/dates";
+import { getShiftStartInstant } from "@/lib/shifts";
 import type { ShiftType } from "@/lib/types";
 import { getPool, query } from "./db";
 
@@ -293,8 +294,14 @@ export async function approveVacationRequest(id: string) {
        ORDER BY (week_start + day_index)`,
       [request.employee_id, startDate, endDate]
     );
-    const removedIds = removedResult.rows.map((row) => row.id);
-    removedShifts = removedResult.rows.map((row) => ({
+    // Only shifts that haven't started yet are removed: if the approval comes late,
+    // shifts the employee already worked stay in the schedule (and in their pay).
+    const now = new Date();
+    const upcomingRows = removedResult.rows.filter(
+      (row) => getShiftStartInstant(toDateOnlyString(row.week_start), row.day_index, row.shift_type) > now
+    );
+    const removedIds = upcomingRows.map((row) => row.id);
+    removedShifts = upcomingRows.map((row) => ({
       weekStart: toDateOnlyString(row.week_start),
       dayIndex: row.day_index,
       shiftType: row.shift_type

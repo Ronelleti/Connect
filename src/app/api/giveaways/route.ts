@@ -30,13 +30,19 @@ export async function GET() {
 
   // Everyone sees the open board; finished giveaways only show to the people involved
   // (managers see all of them).
+  // An offer that was never completed before its shift started is no longer actionable,
+  // so it drops off the board.
+  const isActive = (giveaway: (typeof giveaways)[number]) =>
+    (giveaway.status === "OPEN" || giveaway.status === "PENDING_MANAGER") &&
+    getShiftStartInstant(giveaway.weekStart, giveaway.dayIndex, giveaway.shiftType) > now;
   const visible = giveaways.filter(
     (giveaway) =>
-      giveaway.status === "OPEN" ||
-      giveaway.status === "PENDING_MANAGER" ||
-      user.role === "MANAGER" ||
-      giveaway.offeredByEmployeeId === employee?.id ||
-      giveaway.takenByEmployeeId === employee?.id
+      isActive(giveaway) ||
+      (giveaway.status !== "OPEN" &&
+        giveaway.status !== "PENDING_MANAGER" &&
+        (user.role === "MANAGER" ||
+          giveaway.offeredByEmployeeId === employee?.id ||
+          giveaway.takenByEmployeeId === employee?.id))
   );
   const offerableShifts = upcoming.filter(
     (assignment) =>

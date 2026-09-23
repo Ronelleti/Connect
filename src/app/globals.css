@@ -1021,6 +1021,12 @@ select:hover {
   align-items: center;
   gap: 6px;
   font-weight: 800;
+  /* Long names wrap inside the chip instead of pushing the remove button out of the cell. */
+  overflow-wrap: anywhere;
+}
+
+.employee-chip > button {
+  flex: 0 0 auto;
 }
 
 .assignment-warning {
