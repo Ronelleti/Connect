@@ -73,6 +73,13 @@ the first manager is bootstrapped once with the production-safe admin script.
 - The Files page is gated behind a shared access code (`FILES_ACCESS_CODE`): every user must enter it once before they can view, ask about, or download anything there. Entering it correctly unlocks the page for 30 days per browser. If the code isn't configured, the page stays locked for everyone rather than opening by default.
 - If `ANTHROPIC_API_KEY` is configured, each file gets an "ask a question" thread where anyone can ask about its content and get an AI-generated answer based only on the extracted text; the question and answer are saved so others can see the thread. Without that key, uploads/downloads still work, but asking a question returns a clear "not configured" message instead of an answer.
 
+## Salary Estimate
+
+- `/salary` shows each signed-in employee an estimate of their own pay; nobody else (including managers) can see another person's wage or estimate.
+- The pay period runs from the 20th of one month through the 19th of the next, and is paid on the 10th of the month after the period ends (e.g. 20.08-19.09 is paid on 10.10). Earlier and later periods can be browsed.
+- Each employee enters their own hourly wage and tax credit points. Morning and evening hours are paid at the hourly wage and night-shift hours at 125%. All shifts assigned in the period count, including ones not yet worked.
+- The net figure is a rough estimate: income tax brackets, national insurance/health tax and a 6% employee pension deduction, using the constants in `src/lib/salary.ts` (2025 values; update them there when they change).
+
 ## Security
 
 - The session cookie is encrypted and authenticated, `HttpOnly`, `SameSite=Lax`, and `Secure` in production. Sessions expire after eight hours.

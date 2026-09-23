@@ -897,3 +897,46 @@ function toFileQuestion(row: FileQuestionRow): FileQuestion {
     createdAt: row.created_at
   };
 }
+
+export async function listEmployeeAssignmentsBetween(
+  employeeId: string,
+  fromDateOnly: string,
+  toDateOnly: string
+) {
+  const rows = await query<AssignmentRow>(
+    `SELECT * FROM shift_assignments
+     WHERE employee_id = $1
+       AND (week_start::date + day_index) >= $2::date
+       AND (week_start::date + day_index) < $3::date
+     ORDER BY (week_start::date + day_index) ASC`,
+    [employeeId, fromDateOnly, toDateOnly]
+  );
+  return rows.map(toAssignment);
+}
+
+export interface PaySettings {
+  hourlyWage: number;
+  taxCreditPoints: number;
+}
+
+export async function findPaySettings(employeeId: string): Promise<PaySettings | null> {
+  const [row] = await query<{ hourly_wage: string; tax_credit_points: string }>(
+    "SELECT hourly_wage, tax_credit_points FROM employee_pay_settings WHERE employee_id = $1",
+    [employeeId]
+  );
+  return row
+    ? { hourlyWage: Number(row.hourly_wage), taxCreditPoints: Number(row.tax_credit_points) }
+    : null;
+}
+
+export async function savePaySettings(employeeId: string, settings: PaySettings) {
+  await query(
+    `INSERT INTO employee_pay_settings (employee_id, hourly_wage, tax_credit_points)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (employee_id) DO UPDATE SET
+       hourly_wage = EXCLUDED.hourly_wage,
+       tax_credit_points = EXCLUDED.tax_credit_points,
+       updated_at = now()`,
+    [employeeId, settings.hourlyWage, settings.taxCreditPoints]
+  );
+}

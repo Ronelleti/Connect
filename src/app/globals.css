@@ -2617,3 +2617,64 @@ html[data-theme="dark"] {
   }
 
 }
+
+.salary-breakdown,
+.salary-settings {
+  margin-top: 16px;
+}
+
+.salary-breakdown h2,
+.salary-settings h2 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.salary-breakdown dl {
+  display: grid;
+  margin: 0;
+}
+
+.salary-breakdown dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.salary-breakdown dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.salary-breakdown dd {
+  margin: 0;
+  font-weight: 700;
+  direction: ltr;
+}
+
+.salary-breakdown .salary-total dt,
+.salary-breakdown .salary-total dd {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.salary-settings {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.salary-settings label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.salary-settings .primary-button {
+  gap: 7px;
+}

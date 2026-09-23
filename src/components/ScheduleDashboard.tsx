@@ -26,6 +26,7 @@ import {
   UserRound,
   UserPlus,
   UsersRound,
+  Wallet,
   Wand2,
   X
 } from "lucide-react";
@@ -622,6 +623,9 @@ export function ScheduleDashboard({
         >
           <Repeat2 size={20} />
         </button>
+        <Link href="/salary" title="הערכת שכר" className="rail-button">
+          <Wallet size={20} />
+        </Link>
         <Link href="/files" title="קבצים" className="rail-button">
           <FileText size={20} />
         </Link>

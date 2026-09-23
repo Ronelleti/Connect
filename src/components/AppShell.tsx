@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, FileText, LayoutDashboard, LogOut, UserRound } from "lucide-react";
+import { CalendarDays, FileText, LayoutDashboard, LogOut, UserRound, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { ThemeToggle } from "./ThemeToggle";
 import type { User } from "@/lib/types";
@@ -14,7 +14,7 @@ export function AppShell({
   children
 }: {
   currentUser: User;
-  active: "home" | "schedule" | "files";
+  active: "home" | "schedule" | "files" | "salary";
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -40,6 +40,9 @@ export function AppShell({
           className={`rail-button ${active === "schedule" ? "active" : ""}`}
         >
           <CalendarDays size={20} />
+        </Link>
+        <Link href="/salary" title="הערכת שכר" className={`rail-button ${active === "salary" ? "active" : ""}`}>
+          <Wallet size={20} />
         </Link>
         <Link href="/files" title="קבצים" className={`rail-button ${active === "files" ? "active" : ""}`}>
           <FileText size={20} />
