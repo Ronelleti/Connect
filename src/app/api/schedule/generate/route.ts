@@ -3,7 +3,7 @@ import { generateWeeklySchedule } from "@/lib/autoSchedule";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import {
   bulkCreateAssignments,
-  listAssignments,
+  listAssignmentsAroundWeek,
   listAvailabilityBlocks,
   listEmployees
 } from "@/server/repositories";
@@ -20,13 +20,25 @@ export async function POST(request: Request) {
     return jsonError("A week is required.");
   }
 
-  const [employees, existingAssignments, availabilityBlocks] = await Promise.all([
+  const [employees, nearbyAssignments, availabilityBlocks] = await Promise.all([
     listEmployees(),
-    listAssignments(weekStart),
+    listAssignmentsAroundWeek(weekStart),
     listAvailabilityBlocks(weekStart)
   ]);
+  const existingAssignments = nearbyAssignments.filter(
+    (assignment) => assignment.weekStart === weekStart.slice(0, 10)
+  );
+  const neighbouringAssignments = nearbyAssignments.filter(
+    (assignment) => assignment.weekStart !== weekStart.slice(0, 10)
+  );
 
-  const plan = generateWeeklySchedule(weekStart, employees, existingAssignments, availabilityBlocks);
+  const plan = generateWeeklySchedule(
+    weekStart,
+    employees,
+    existingAssignments,
+    availabilityBlocks,
+    neighbouringAssignments
+  );
   const created = await bulkCreateAssignments(weekStart, plan.created);
 
   return NextResponse.json({

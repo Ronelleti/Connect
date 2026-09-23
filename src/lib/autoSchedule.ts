@@ -1,12 +1,15 @@
 import { findShiftAvailability, isUnavailableForShift } from "./availability";
+import { diffDays } from "./dates";
 import { MAX_WEEKLY_SHIFTS, getShiftTypes } from "./shifts";
 import type { AvailabilityBlock, Employee, ShiftAssignment, ShiftType } from "./types";
 
-// Shifts run Morning -> Evening -> Night -> Morning (next day) as one continuous weekly
-// sequence. Requiring a gap of 3 slots between an employee's shifts means at least two
-// other shifts must pass in between (>=16h rest), which also rules out back-to-back shifts.
+// Shifts run Morning -> Evening -> Night -> Morning (next day) as one continuous sequence
+// of 8-hour slots. A gap of 3 slots means two other shifts pass in between (16h rest),
+// which is what we aim for. Only when nobody can cover a shift with 16h rest do we fall
+// back to a gap of 2 slots (8h rest). Back-to-back shifts (gap 1, 0h rest) are never
+// generated.
 const MIN_REST_SLOT_GAP = 3;
-const RELAXED_SLOT_GAP = 1;
+const RELAXED_SLOT_GAP = 2;
 
 export interface AutoScheduleSlot {
   dayIndex: number;
@@ -28,7 +31,9 @@ export function generateWeeklySchedule(
   weekStart: string,
   employees: Employee[],
   existingAssignments: ShiftAssignment[],
-  availabilityBlocks: AvailabilityBlock[]
+  availabilityBlocks: AvailabilityBlock[],
+  // Assignments from the weeks before/after, used only for rest gaps across the boundary.
+  neighbouringAssignments: ShiftAssignment[] = []
 ): AutoScheduleResult {
   const shiftTypes = getShiftTypes();
   const activeEmployees = employees.filter((employee) => employee.isActive);
@@ -45,6 +50,15 @@ export function generateWeeklySchedule(
     }
     slotsByEmployee.get(assignment.employeeId)!.push(slotIndex(assignment.dayIndex, assignment.shiftType, shiftTypes));
     countByEmployee.set(assignment.employeeId, (countByEmployee.get(assignment.employeeId) ?? 0) + 1);
+  }
+  for (const assignment of neighbouringAssignments) {
+    const weekOffsetSlots = diffDays(weekStart, assignment.weekStart.slice(0, 10)) * shiftTypes.length;
+    if (weekOffsetSlots === 0 || !slotsByEmployee.has(assignment.employeeId)) {
+      continue;
+    }
+    slotsByEmployee
+      .get(assignment.employeeId)!
+      .push(weekOffsetSlots + slotIndex(assignment.dayIndex, assignment.shiftType, shiftTypes));
   }
 
   const occupied = new Set(

@@ -130,9 +130,14 @@ export function validateAssignment(
   const ownAssignments = existingAssignments.filter(
     (assignment) => assignment.employeeId === input.employeeId
   );
+  // existingAssignments may include the neighbouring weeks so rest gaps across a week
+  // boundary are caught; the weekly limit and duplicate checks only concern this week.
+  const ownWeekAssignments = ownAssignments.filter(
+    (assignment) => assignment.weekStart.slice(0, 10) === input.weekStart.slice(0, 10)
+  );
 
   const weeklyLimit = Math.min(employee.weeklyMaxShifts, MAX_WEEKLY_SHIFTS);
-  if (ownAssignments.length >= weeklyLimit) {
+  if (ownWeekAssignments.length >= weeklyLimit) {
     errors.push({
       code: "WEEKLY_LIMIT",
       message: `העובד כבר שובץ ל-${weeklyLimit} משמרות השבוע.`
@@ -140,7 +145,7 @@ export function validateAssignment(
   }
 
   if (
-    ownAssignments.some(
+    ownWeekAssignments.some(
       (assignment) =>
         assignment.dayIndex === input.dayIndex && assignment.shiftType === input.shiftType
     )
@@ -158,19 +163,24 @@ export function validateAssignment(
     });
   }
 
-  warnings.push(...getRestWarnings(input, ownAssignments));
+  const rest = getRestIssues(input, ownAssignments);
+  errors.push(...rest.errors);
+  warnings.push(...rest.warnings);
 
   return { errors, warnings };
 }
 
-export function getRestWarnings(
+// Less than 8 hours of rest (e.g. back-to-back shifts) is never allowed; exactly 8 hours
+// (the "8-8" case) is allowed only after the manager confirms the warning.
+export function getRestIssues(
   input: AssignmentInput,
   existingAssignments: ShiftAssignment[]
-): AssignmentIssue[] {
+): AssignmentValidation {
   const ownAssignments = existingAssignments.filter(
     (assignment) => assignment.employeeId === input.employeeId
   );
   const candidate = getShiftWindow(input.weekStart, input.dayIndex, input.shiftType);
+  const errors: AssignmentIssue[] = [];
   const warnings: AssignmentIssue[] = [];
 
   for (const assignment of ownAssignments) {
@@ -178,11 +188,11 @@ export function getRestWarnings(
     const gapAfterExisting = hoursBetween(existing.ends, candidate.starts);
     const gapBeforeExisting = hoursBetween(candidate.ends, existing.starts);
 
-    addRestWarning(gapAfterExisting, warnings);
-    addRestWarning(gapBeforeExisting, warnings);
+    addRestIssue(gapAfterExisting, errors, warnings);
+    addRestIssue(gapBeforeExisting, errors, warnings);
   }
 
-  return uniqueIssues(warnings);
+  return { errors: uniqueIssues(errors), warnings: uniqueIssues(warnings) };
 }
 
 function isBlocked(input: AssignmentInput, availabilityBlocks: AvailabilityBlock[]): boolean {
@@ -213,7 +223,7 @@ function isBlocked(input: AssignmentInput, availabilityBlocks: AvailabilityBlock
     });
 }
 
-function addRestWarning(gapHours: number, warnings: AssignmentIssue[]) {
+function addRestIssue(gapHours: number, errors: AssignmentIssue[], warnings: AssignmentIssue[]) {
   if (gapHours < 0 || gapHours > MIN_REST_HOURS) {
     return;
   }
@@ -226,9 +236,11 @@ function addRestWarning(gapHours: number, warnings: AssignmentIssue[]) {
     return;
   }
 
-  warnings.push({
+  errors.push({
     code: "INSUFFICIENT_REST",
-    message: `אזהרה: לעובד יש רק ${gapHours} שעות מנוחה בין המשמרות.`
+    message: gapHours === 0
+      ? "לא ניתן לשבץ משמרות רצופות: נדרשות לפחות 8 שעות מנוחה בין המשמרות."
+      : `לא ניתן לשבץ: לעובד יש רק ${gapHours} שעות מנוחה, ונדרשות לפחות 8.`
   });
 }
 

@@ -135,7 +135,7 @@ describe("generateWeeklySchedule", () => {
     expect(findAssignment(result.created, 0, "MORNING")).toBeUndefined();
   });
 
-  it("relaxes the rest rule only as a last resort when no one else can cover a shift", () => {
+  it("never schedules back-to-back shifts, even when no one else can cover them", () => {
     const employees = [makeEmployee({ id: "a", name: "אביגיל" })];
     const existing: ShiftAssignment[] = [
       { id: "existing-1", employeeId: "a", weekStart: WEEK_START, dayIndex: 0, shiftType: "MORNING", notes: "" }
@@ -143,11 +143,63 @@ describe("generateWeeklySchedule", () => {
 
     const result = generateWeeklySchedule(WEEK_START, employees, existing, []);
 
-    const eveningShift = findAssignment(result.created, 0, "EVENING");
-    expect(eveningShift?.employeeId).toBe("a");
+    expect(findAssignment(result.created, 0, "EVENING")).toBeUndefined();
+    expect(result.unfilled).toContainEqual({ dayIndex: 0, shiftType: "EVENING" });
+  });
+
+  it("falls back to 8 hours of rest only as a last resort when no one else can cover a shift", () => {
+    const employees = [makeEmployee({ id: "a", name: "אביגיל" })];
+    const existing: ShiftAssignment[] = [
+      { id: "existing-1", employeeId: "a", weekStart: WEEK_START, dayIndex: 0, shiftType: "MORNING", notes: "" }
+    ];
+
+    const result = generateWeeklySchedule(WEEK_START, employees, existing, []);
+
+    const nightShift = findAssignment(result.created, 0, "NIGHT");
+    expect(nightShift?.employeeId).toBe("a");
     expect(result.relaxedRest).toContainEqual(
-      expect.objectContaining({ employeeId: "a", dayIndex: 0, shiftType: "EVENING" })
+      expect.objectContaining({ employeeId: "a", dayIndex: 0, shiftType: "NIGHT" })
     );
+  });
+
+  it("keeps every generated schedule free of shifts with less than 8 hours of rest", () => {
+    const employees = [
+      makeEmployee({ id: "a", name: "אביגיל" }),
+      makeEmployee({ id: "b", name: "בן" }),
+      makeEmployee({ id: "c", name: "גיל" })
+    ];
+
+    const result = generateWeeklySchedule(WEEK_START, employees, [], []);
+
+    const order: ShiftType[] = ["MORNING", "EVENING", "NIGHT"];
+    for (const employee of employees) {
+      const slots = result.created
+        .filter((item) => item.employeeId === employee.id)
+        .map((item) => item.dayIndex * 3 + order.indexOf(item.shiftType))
+        .sort((x, y) => x - y);
+      for (let index = 1; index < slots.length; index += 1) {
+        expect(slots[index] - slots[index - 1]).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("respects rest after the previous week's Saturday night shift", () => {
+    const employees = [
+      makeEmployee({ id: "a", name: "אביגיל" }),
+      makeEmployee({ id: "b", name: "בן" })
+    ];
+    const previousSaturdayNight: ShiftAssignment = {
+      id: "prev-1",
+      employeeId: "a",
+      weekStart: "2026-07-12",
+      dayIndex: 6,
+      shiftType: "NIGHT",
+      notes: ""
+    };
+
+    const result = generateWeeklySchedule(WEEK_START, employees, [], [], [previousSaturdayNight]);
+
+    expect(findAssignment(result.created, 0, "MORNING")?.employeeId).toBe("b");
   });
 
   it("leaves a shift unfilled when every employee is unavailable or maxed out", () => {

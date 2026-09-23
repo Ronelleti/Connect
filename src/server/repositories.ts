@@ -263,6 +263,18 @@ export async function listAssignments(weekStart: string) {
   return rows.map(toAssignment);
 }
 
+// The week plus the weeks before and after it, so rest gaps that cross a week boundary
+// (e.g. Saturday night -> Sunday morning) can be checked.
+export async function listAssignmentsAroundWeek(weekStart: string) {
+  const rows = await query<AssignmentRow>(
+    `SELECT * FROM shift_assignments
+     WHERE week_start BETWEEN $1::date - 7 AND $1::date + 7
+     ORDER BY week_start, day_index, shift_type`,
+    [weekStart]
+  );
+  return rows.map(toAssignment);
+}
+
 export async function findUserById(id: string) {
   const [user] = await query<UserRow>("SELECT * FROM users WHERE id = $1", [id]);
   return user ?? null;

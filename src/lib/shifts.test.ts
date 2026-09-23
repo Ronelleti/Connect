@@ -3,7 +3,7 @@ import {
   SHIFT_DEFINITIONS,
   calculateSummaries,
   getCurrentShiftSlot,
-  getRestWarnings,
+  getRestIssues,
   getShiftStartInstant,
   validateAssignment
 } from "./shifts";
@@ -60,7 +60,7 @@ describe("shift rules", () => {
     );
   });
 
-  it("warns but allows direct back-to-back shifts", () => {
+  it("blocks direct back-to-back shifts", () => {
     const validation = validateAssignment(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "EVENING" },
       employee,
@@ -68,10 +68,38 @@ describe("shift rules", () => {
       []
     );
 
-    expect(validation.errors).toHaveLength(0);
-    expect(validation.warnings).toContainEqual(
+    expect(validation.errors).toContainEqual(
       expect.objectContaining({ code: "INSUFFICIENT_REST" })
     );
+  });
+
+  it("blocks a back-to-back shift across the week boundary", () => {
+    const previousSaturdayNight = { ...assignment("1", 6, "NIGHT"), weekStart: "2026-07-12" };
+    const validation = validateAssignment(
+      { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "MORNING" },
+      employee,
+      [previousSaturdayNight],
+      []
+    );
+
+    expect(validation.errors).toContainEqual(
+      expect.objectContaining({ code: "INSUFFICIENT_REST" })
+    );
+  });
+
+  it("does not count other weeks' shifts toward the weekly limit", () => {
+    const previousWeek = [0, 1, 2, 3, 4, 5].map((day) => ({
+      ...assignment(`prev-${day}`, day, "MORNING"),
+      weekStart: "2026-07-12"
+    }));
+    const validation = validateAssignment(
+      { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 3, shiftType: "MORNING" },
+      employee,
+      previousWeek,
+      []
+    );
+
+    expect(validation.errors).toHaveLength(0);
   });
 
   it("warns when a night shift is followed by next-day evening shift", () => {
@@ -90,22 +118,24 @@ describe("shift rules", () => {
     );
   });
 
-  it("detects back-to-back rest warnings for a proposed shift swap", () => {
-    const warnings = getRestWarnings(
+  it("blocks a back-to-back shift for a proposed shift swap", () => {
+    const { errors } = getRestIssues(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "EVENING" },
       [assignment("1", 0, "MORNING")]
     );
 
-    expect(warnings).toContainEqual(
+    expect(errors).toContainEqual(
       expect.objectContaining({ code: "INSUFFICIENT_REST" })
     );
   });
 
   it("detects an 8-8 rest warning for a proposed shift swap", () => {
-    const warnings = getRestWarnings(
+    const { errors, warnings } = getRestIssues(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 1, shiftType: "EVENING" },
       [assignment("1", 0, "NIGHT")]
     );
+
+    expect(errors).toHaveLength(0);
 
     expect(warnings).toContainEqual(
       expect.objectContaining({ code: "EIGHT_EIGHT_REST" })

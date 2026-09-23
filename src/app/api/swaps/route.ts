@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getRestWarnings } from "@/lib/shifts";
+import { getRestIssues } from "@/lib/shifts";
+import type { AssignmentIssue } from "@/lib/types";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import {
   createSwapRequest,
   findAssignment,
-  listAssignments,
+  listAssignmentsAroundWeek,
   listEmployees
 } from "@/server/repositories";
 import { notifyManagerOfSwapRequest } from "@/server/swapNotifications";
@@ -54,8 +55,8 @@ export async function POST(request: Request) {
     return jsonError("The target shift must belong to the selected employee in the same week.");
   }
 
-  const assignments = await listAssignments(requesterAssignment.weekStart);
-  const targetWarnings = getRestWarnings(
+  const assignments = await listAssignmentsAroundWeek(requesterAssignment.weekStart);
+  const targetRest = getRestIssues(
     {
       employeeId: targetEmployeeId,
       weekStart: requesterAssignment.weekStart,
@@ -63,14 +64,9 @@ export async function POST(request: Request) {
       shiftType: requesterAssignment.shiftType
     },
     assignments.filter((assignment) => assignment.id !== targetAssignmentId)
-  ).map((warning) => ({
-    ...warning,
-    code: `TARGET_${warning.code}`,
-    message: `${targetEmployee.name}: ${warning.message}`
-  }));
-
-  const requesterWarnings = targetAssignment
-    ? getRestWarnings(
+  );
+  const requesterRest = targetAssignment
+    ? getRestIssues(
         {
           employeeId: requesterAssignment.employeeId,
           weekStart: targetAssignment.weekStart,
@@ -78,13 +74,27 @@ export async function POST(request: Request) {
           shiftType: targetAssignment.shiftType
         },
         assignments.filter((assignment) => assignment.id !== requesterAssignment.id)
-      ).map((warning) => ({
-        ...warning,
-        code: `REQUESTER_${warning.code}`,
-        message: `${requesterEmployee?.name ?? "העובד המבקש"}: ${warning.message}`
-      }))
-    : [];
-  const warnings = [...targetWarnings, ...requesterWarnings];
+      )
+    : { errors: [], warnings: [] };
+  const labelTarget = (issue: AssignmentIssue) => ({
+    ...issue,
+    code: `TARGET_${issue.code}`,
+    message: `${targetEmployee.name}: ${issue.message}`
+  });
+  const labelRequester = (issue: AssignmentIssue) => ({
+    ...issue,
+    code: `REQUESTER_${issue.code}`,
+    message: `${requesterEmployee?.name ?? "העובד המבקש"}: ${issue.message}`
+  });
+  const errors = [...targetRest.errors.map(labelTarget), ...requesterRest.errors.map(labelRequester)];
+  const warnings = [
+    ...targetRest.warnings.map(labelTarget),
+    ...requesterRest.warnings.map(labelRequester)
+  ];
+
+  if (errors.length > 0) {
+    return jsonError("Swap violates the minimum rest rule.", 409, { errors, warnings });
+  }
 
   if (warnings.length > 0 && body.acknowledgeWarnings !== true) {
     return jsonError("Swap requires rest warning confirmation.", 409, {
