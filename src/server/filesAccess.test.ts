@@ -56,7 +56,9 @@ describe("files access token", () => {
 
   it("rejects a tampered token", () => {
     const parts = signFilesAccessToken().split(".");
-    parts[2] = `x${parts[2].slice(1)}`;
+    // Always change the first character (every bit of it is significant); replacing it
+    // with a fixed letter would be a no-op whenever the signature already starts with it.
+    parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
     expect(readFilesAccessToken(parts.join("."))).toBe(false);
   });
 

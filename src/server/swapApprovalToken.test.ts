@@ -36,7 +36,9 @@ describe("swap approval email tokens", () => {
     const parts = signSwapApprovalToken("swap-1", "decline_manager", "summary").split(".");
     // Tamper the first character of the tag, which always flips the decoded byte
     // (unlike the last character of a base64 segment, whose low bits can be unused).
-    parts[2] = `x${parts[2].slice(1)}`;
+    // Always change the first character (every bit of it is significant); replacing it
+    // with a fixed letter would be a no-op whenever the signature already starts with it.
+    parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
 
     expect(readSwapApprovalToken(parts.join("."))).toBeNull();
   });
