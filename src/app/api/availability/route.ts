@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { AvailabilityStatus, ShiftType } from "@/lib/types";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import { createAvailabilityBlock, listEmployees } from "@/server/repositories";
+import { markAvailabilitySubmitted } from "@/server/requests";
 
 export async function POST(request: Request) {
   const user = await requireApiUser();
@@ -45,6 +46,10 @@ export async function POST(request: Request) {
     reason: String(body.reason ?? ""),
     status
   });
+
+  if (employee.userId === user.id) {
+    await markAvailabilitySubmitted(employee.id, block.weekStart);
+  }
 
   return NextResponse.json({ block }, { status: 201 });
 }

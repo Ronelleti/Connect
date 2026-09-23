@@ -375,3 +375,39 @@ function toDateOnlyString(value: string | Date): string {
   const day = String(value.getDate()).padStart(2, "0");
   return `${value.getFullYear()}-${month}-${day}`;
 }
+
+export async function markAvailabilitySubmitted(employeeId: string, weekStart: string) {
+  await query(
+    `INSERT INTO availability_submissions (employee_id, week_start)
+     VALUES ($1, $2)
+     ON CONFLICT (employee_id, week_start) DO UPDATE SET submitted_at = now()`,
+    [employeeId, weekStart]
+  );
+}
+
+export async function findAvailabilitySubmission(employeeId: string, weekStart: string) {
+  const [row] = await query<{ submitted_at: string | Date }>(
+    "SELECT submitted_at FROM availability_submissions WHERE employee_id = $1 AND week_start = $2",
+    [employeeId, weekStart]
+  );
+  return row ? new Date(row.submitted_at).toISOString() : null;
+}
+
+// Active employees who can sign in and have neither confirmed nor changed their
+// availability for the given week.
+export async function listUserIdsMissingAvailability(weekStart: string): Promise<string[]> {
+  const rows = await query<{ user_id: string }>(
+    `SELECT e.user_id FROM employees e
+     WHERE e.is_active AND e.user_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM availability_submissions s
+         WHERE s.employee_id = e.id AND s.week_start = $1
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM availability_blocks b
+         WHERE b.employee_id = e.id AND b.week_start = $1
+       )`,
+    [weekStart]
+  );
+  return rows.map((row) => row.user_id);
+}

@@ -3069,3 +3069,43 @@ html[data-theme="dark"] {
     justify-content: flex-start;
   }
 }
+
+.availability-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+  border: 1px solid #f1d58a;
+  border-radius: 8px;
+  background: #fff8e5;
+  padding: 10px 14px;
+  font-weight: 600;
+}
+
+.availability-confirm span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.availability-confirm .primary-button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.availability-confirm.done {
+  border-color: #b9dfb2;
+  background: #eef8ec;
+}
+
+[data-theme="dark"] .availability-confirm {
+  border-color: #5c4a1c;
+  background: #2b2619;
+}
+
+[data-theme="dark"] .availability-confirm.done {
+  border-color: #2f5a36;
+  background: #19291f;
+}

@@ -32,6 +32,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AvailabilityConfirmBar } from "./AvailabilityConfirmBar";
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { AssignmentUndoToast } from "./AssignmentUndoToast";
 import { CurrentShiftBanner } from "./CurrentShiftBanner";
@@ -993,6 +994,7 @@ export function ScheduleDashboard({
             </aside>
           </section>
 
+          {ownEmployee ? <AvailabilityConfirmBar /> : null}
           <AvailabilityPanel
             currentUser={currentUser}
             weekStart={initialAvailabilityWeekStart}

@@ -5,6 +5,7 @@ import {
   findAvailabilityBlock,
   listEmployees
 } from "@/server/repositories";
+import { markAvailabilitySubmitted } from "@/server/requests";
 
 export async function DELETE(_: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -24,5 +25,8 @@ export async function DELETE(_: Request, context: { params: Promise<{ id: string
   }
 
   await deleteAvailabilityBlock(block.id);
+  if (employee?.userId === user.id) {
+    await markAvailabilitySubmitted(employee.id, block.weekStart);
+  }
   return NextResponse.json({ ok: true });
 }

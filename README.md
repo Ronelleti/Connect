@@ -80,6 +80,15 @@ the first manager is bootstrapped once with the production-safe admin script.
 - Each employee enters their own hourly wage and tax credit points. Morning and evening hours are paid at the hourly wage and night-shift hours at 125%. All shifts assigned in the period count, including ones not yet worked.
 - The net figure is a rough estimate: income tax brackets, national insurance/health tax and a 6% employee pension deduction, using the constants in `src/lib/salary.ts` (2025 values; update them there when they change).
 
+## Notifications, Requests and the Phone App
+
+- **Notifications:** a bell in the top bar lists each user's notifications with an unread count. With `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` configured (generate them once with `npx web-push generate-vapid-keys`), users can also turn on phone/desktop push notifications from the bell.
+- **Install as an app:** the site ships a web app manifest, icons and a service worker, so it can be added to a phone's home screen and opens full screen. On iPhone, push notifications only work after "Add to Home Screen" (iOS 16.4+).
+- **Swaps:** the target employee is notified of a request; when they accept, the requester is told and managers are asked to approve; when a manager approves or declines, both employees are notified.
+- **Shift giveaways** (`/requests`): an employee offers one of their future shifts to everyone; another employee takes it (rest, weekly-limit and vacation rules apply); managers approve the handover. Each step notifies the people involved.
+- **Vacation requests** (`/requests`): employees request a date range; managers approve or decline. Approval marks every day as full-day vacation (`חופש`) and removes the employee's shifts on those days, leaving them empty for the manager to refill. Swaps and giveaways can't hand a shift to someone on a vacation day.
+- **Availability reminder:** every Sunday at 06:00 UTC the Netlify scheduled function `netlify/functions/availability-reminder.mts` reminds employees who haven't filled in the week that is open for availability (deadline: Tuesday). Employees count as done once they change any availability or press "סיימתי למלא". Requires `CRON_SECRET`.
+
 ## Security
 
 - The session cookie is encrypted and authenticated, `HttpOnly`, `SameSite=Lax`, and `Secure` in production. Sessions expire after eight hours.
