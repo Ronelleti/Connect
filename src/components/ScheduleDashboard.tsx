@@ -36,6 +36,7 @@ import { AssignmentUndoToast } from "./AssignmentUndoToast";
 import { CurrentShiftBanner } from "./CurrentShiftBanner";
 import { EmployeeEditorDialog, type EmployeeEditor } from "./EmployeeEditorDialog";
 import { ShiftWorkerPicker } from "./ShiftWorkerPicker";
+import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 import {
   availabilityStatusLabel,
@@ -653,6 +654,7 @@ export function ScheduleDashboard({
           </div>
           <div className="topbar-actions">
             <span className="trial-pill">ניהול משמרות</span>
+            <NotificationBell />
             <span className="user-pill">
               <UserRound size={18} />
               {currentUser.name}

@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Heebo } from "next/font/google";
+import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
 import "./globals.css";
 
 const heebo = Heebo({
@@ -13,8 +14,18 @@ export const metadata: Metadata = {
   title: "Wecomconnect",
   description: "Shift scheduling for three-shift teams",
   icons: {
-    icon: "/wecom-logo.svg"
+    icon: "/wecom-logo.svg",
+    apple: "/icons/apple-touch-icon.png"
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Wecom",
+    statusBarStyle: "default"
   }
+};
+
+export const viewport: Viewport = {
+  themeColor: "#10141b"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -27,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         {children}
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );
