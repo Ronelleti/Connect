@@ -22,6 +22,10 @@ vi.mock("@/server/repositories", () => ({
   decideSwapRequest: mocks.decideSwapRequest
 }));
 
+vi.mock("@/server/swapNotifications", () => ({
+  notifySwapDecision: vi.fn()
+}));
+
 import { PATCH } from "./route";
 
 const manager = { id: "manager-user", email: "admin@example.com", name: "admin", role: "MANAGER" };

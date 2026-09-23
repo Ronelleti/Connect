@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { decideSwapRequest } from "@/server/repositories";
 import { readSwapApprovalToken } from "@/server/swapApprovalToken";
+import { notifySwapDecision } from "@/server/swapNotifications";
 
 // GET only renders a confirmation page and never mutates state, since some email
 // clients and corporate security gateways prefetch links to scan them; the actual
@@ -52,6 +53,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       "warning"
     );
   }
+  await notifySwapDecision(swap, payload.action);
 
   if (payload.action === "decline_manager") {
     return htmlPage("ההחלפה נדחתה", "בקשת ההחלפה נדחתה בהצלחה.", "success");

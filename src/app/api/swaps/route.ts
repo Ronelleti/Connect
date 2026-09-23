@@ -8,7 +8,7 @@ import {
   listAssignmentsAroundWeek,
   listEmployees
 } from "@/server/repositories";
-import { notifyManagerOfSwapRequest } from "@/server/swapNotifications";
+import { notifyManagerOfSwapRequest, notifySwapRequested } from "@/server/swapNotifications";
 
 export async function POST(request: Request) {
   const user = await requireApiUser();
@@ -117,6 +117,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to send swap approval email", error);
   }
+  await notifySwapRequested(swap);
 
   return NextResponse.json({ swap, validation: { errors: [], warnings } }, { status: 201 });
 }

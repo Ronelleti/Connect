@@ -6,6 +6,7 @@ import {
   listEmployees,
   type SwapDecisionAction
 } from "@/server/repositories";
+import { notifySwapDecision } from "@/server/swapNotifications";
 
 const ACTIONS: Record<string, {
   action: SwapDecisionAction;
@@ -62,5 +63,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (!swap) {
     return jsonError("This swap request was already handled or the schedule has changed.", 409);
   }
+  await notifySwapDecision(swap, action.action);
   return NextResponse.json({ swap });
 }
