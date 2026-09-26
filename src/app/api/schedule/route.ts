@@ -8,6 +8,7 @@ import {
   listEmployees,
   listSwapRequests
 } from "@/server/repositories";
+import { getWeekPublishedAt } from "@/server/schedulePublishing";
 
 export async function GET(request: Request) {
   const user = await requireApiUser();
@@ -19,13 +20,14 @@ export async function GET(request: Request) {
   const weekStart = searchParams.get("weekStart") ?? getSundayWeekStart();
   const availabilityWeekStart =
     searchParams.get("availabilityWeekStart") ?? getAvailabilityWeekStart();
-  const [employees, assignments, scheduleAvailabilityBlocks, availabilityBlocks, swaps] =
+  const [employees, assignments, scheduleAvailabilityBlocks, availabilityBlocks, swaps, publishedAt] =
     await Promise.all([
       listEmployees(),
       listAssignments(weekStart),
       listAvailabilityBlocks(weekStart),
       listAvailabilityBlocks(availabilityWeekStart),
-      listSwapRequests()
+      listSwapRequests(),
+      getWeekPublishedAt(weekStart)
     ]);
   const ownEmployeeIds = new Set(
     employees.filter((employee) => employee.userId === user.id).map((employee) => employee.id)
@@ -48,6 +50,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     weekStart,
     availabilityWeekStart,
+    publishedAt,
     employees: visibleEmployees,
     assignments,
     scheduleAvailabilityBlocks,

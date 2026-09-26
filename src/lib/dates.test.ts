@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getAvailabilityWeekStart, getScheduleDays, getScheduleMonthRange } from "./dates";
+import {
+  getAvailabilityWeekStart,
+  getScheduleDays,
+  getScheduleMonthRange,
+  isSundayDateOnly
+} from "./dates";
 
 describe("schedule dates", () => {
   it("builds a full Sunday-to-Saturday week with dates", () => {
@@ -32,5 +37,15 @@ describe("schedule dates", () => {
       monthStart: "2026-09-01",
       monthEnd: "2026-10-01"
     });
+  });
+});
+
+describe("isSundayDateOnly", () => {
+  it("accepts only real Sundays in YYYY-MM-DD form", () => {
+    expect(isSundayDateOnly("2026-10-04")).toBe(true);
+    expect(isSundayDateOnly("2026-10-05")).toBe(false);
+    expect(isSundayDateOnly("2026-02-30")).toBe(false);
+    expect(isSundayDateOnly("2026-10-04T00:00")).toBe(false);
+    expect(isSundayDateOnly("")).toBe(false);
   });
 });

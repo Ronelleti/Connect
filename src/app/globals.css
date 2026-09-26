@@ -3270,3 +3270,37 @@ html[data-theme="dark"] {
     grid-row: 1;
   }
 }
+
+.published-pill {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #b9dfb2;
+  border-radius: 8px;
+  background: #eef8ec;
+  color: #2d7a3a;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .published-pill {
+  border-color: #2f5a36;
+  background: #19291f;
+  color: #8fd19a;
+}
+
+.publish-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b4540d;
+  font-weight: 600;
+}
+
+.publish-confirm {
+  min-height: 38px;
+  padding: 0 16px;
+}

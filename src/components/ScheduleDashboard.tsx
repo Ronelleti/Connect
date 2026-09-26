@@ -21,6 +21,7 @@ import {
   Plus,
   Repeat2,
   Search,
+  Send,
   Share2,
   ShieldAlert,
   Trash2,
@@ -36,6 +37,7 @@ import { AvailabilityConfirmBar } from "./AvailabilityConfirmBar";
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { AssignmentUndoToast } from "./AssignmentUndoToast";
 import { CurrentShiftBanner } from "./CurrentShiftBanner";
+import { InstallAppBanner, InstallAppButton } from "./InstallApp";
 import { EmployeeEditorDialog, type EmployeeEditor } from "./EmployeeEditorDialog";
 import { ShiftWorkerPicker } from "./ShiftWorkerPicker";
 import { NotificationBell } from "./NotificationBell";
@@ -68,6 +70,7 @@ import type {
 interface SchedulePayload {
   weekStart: string;
   availabilityWeekStart: string;
+  publishedAt: string | null;
   employees: Employee[];
   assignments: ShiftAssignment[];
   scheduleAvailabilityBlocks: AvailabilityBlock[];
@@ -114,6 +117,7 @@ type NavigationSection = "schedule" | "employees" | "notifications" | "swaps";
 const EMPTY_SCHEDULE: SchedulePayload = {
   weekStart: "",
   availabilityWeekStart: "",
+  publishedAt: null,
   employees: [],
   assignments: [],
   scheduleAvailabilityBlocks: [],
@@ -125,6 +129,13 @@ const EMPTY_SCHEDULE: SchedulePayload = {
 const AVAILABILITY_PAGE_SIZE = 5;
 const ASSIGNMENT_UNDO_DURATION_MS = 6000;
 const LIVE_SCHEDULE_REFRESH_MS = 10_000;
+
+const publishedTimeFormat = new Intl.DateTimeFormat("he-IL", {
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
 
 export function ScheduleDashboard({
   currentUser,
@@ -152,11 +163,16 @@ export function ScheduleDashboard({
   const [isSavingEmployee, setIsSavingEmployee] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isGeneratingSchedule, setIsGeneratingSchedule] = useState(false);
+  const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const scheduleTableRef = useRef<HTMLDivElement>(null);
   const swapFormRef = useRef<HTMLFormElement>(null);
   const pendingAssignmentRemovalsRef = useRef(new Map<string, ShiftAssignment>());
 
   const days = useMemo(() => getScheduleDays(weekStart), [weekStart]);
+  const emptyShiftCount =
+    days.length * getShiftTypes().length -
+    new Set(schedule.assignments.map((assignment) => `${assignment.dayIndex}:${assignment.shiftType}`)).size;
   const availabilityDays = useMemo(
     () => getScheduleDays(initialAvailabilityWeekStart),
     [initialAvailabilityWeekStart]
@@ -358,6 +374,32 @@ export function ScheduleDashboard({
       messageParts.push(`${unfilledCount} משמרות נשארו פנויות ודורשות שיבוץ ידני.`);
     }
     setToast(messageParts.join(" "));
+    await loadSchedule();
+  }
+
+  async function publishSchedule() {
+    if (isPublishing) {
+      return;
+    }
+    setIsPublishing(true);
+    const response = await fetch("/api/schedule/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weekStart })
+    }).catch(() => null);
+    const body = response ? await response.json().catch(() => ({})) : {};
+    setIsPublishing(false);
+    setIsPublishConfirmOpen(false);
+
+    if (!response?.ok) {
+      setToast(body.error ?? "פרסום הסידור נכשל.");
+      return;
+    }
+    setToast(
+      body.wasPublished
+        ? `נשלח עדכון על הסידור ל-${body.notified} עובדים.`
+        : `הסידור פורסם ונשלחה התראה ל-${body.notified} עובדים.`
+    );
     await loadSchedule();
   }
 
@@ -659,6 +701,7 @@ export function ScheduleDashboard({
           </div>
           <div className="topbar-actions">
             <span className="trial-pill">ניהול משמרות</span>
+            <InstallAppButton />
             <NotificationBell />
             <span className="user-pill">
               <UserRound size={18} />
@@ -672,6 +715,7 @@ export function ScheduleDashboard({
         </header>
 
         <main className="scheduler-page">
+          <InstallAppBanner />
           <CurrentShiftBanner />
 
           <section className="schedule-toolbar" id="schedule-section">
@@ -699,6 +743,27 @@ export function ScheduleDashboard({
                   <Wand2 size={17} />
                   {isGeneratingSchedule ? "יוצר סידור..." : "יצירת סידור אוטומטי"}
                 </button>
+              ) : null}
+              {currentUser.role === "MANAGER" ? (
+                <button
+                  className="export-button publish-button"
+                  onClick={() => setIsPublishConfirmOpen(true)}
+                  disabled={isLoading && schedule.weekStart !== weekStart}
+                  title={
+                    schedule.publishedAt
+                      ? `פורסם ב-${publishedTimeFormat.format(new Date(schedule.publishedAt))}`
+                      : "שליחת התראה לכל העובדים שהסידור לשבוע זה מוכן"
+                  }
+                >
+                  <Send size={17} />
+                  {schedule.publishedAt ? "שליחת עדכון על הסידור" : "פרסום הסידור"}
+                </button>
+              ) : null}
+              {currentUser.role === "MANAGER" && schedule.publishedAt && schedule.weekStart === weekStart ? (
+                <span className="published-pill">
+                  <Check size={15} />
+                  פורסם {publishedTimeFormat.format(new Date(schedule.publishedAt))}
+                </span>
               ) : null}
               <button className="export-button" onClick={exportSchedule}>
                 <Download size={17} />
@@ -1051,6 +1116,44 @@ export function ScheduleDashboard({
           durationMs={ASSIGNMENT_UNDO_DURATION_MS}
           onUndo={assignmentRemoval.undo}
         />
+      ) : null}
+      {isPublishConfirmOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="warning-dialog publish-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-title"
+          >
+            <div className="warning-dialog-icon"><Send size={22} /></div>
+            <div>
+              <h2 id="publish-title">
+                {schedule.publishedAt ? "שליחת עדכון על הסידור" : "פרסום הסידור"}{" "}
+                {formatHebrewDate(weekStart)}-{formatHebrewDate(addDays(weekStart, 6))}
+              </h2>
+              <p className="dialog-copy">
+                {schedule.publishedAt
+                  ? "כל העובדים יקבלו התראה שהסידור עודכן, עם המשמרות שלהם לשבוע זה."
+                  : "כל העובדים יקבלו התראה (באפליקציה ובטלפון) שהסידור מוכן, עם המשמרות שלהם לשבוע זה."}
+              </p>
+              {emptyShiftCount > 0 ? (
+                <p className="dialog-copy publish-warning">
+                  <AlertTriangle size={15} />
+                  {emptyShiftCount === 1 ? "משמרת אחת עדיין לא מאוישת." : `${emptyShiftCount} משמרות עדיין לא מאוישות.`}
+                </p>
+              ) : null}
+            </div>
+            <div className="warning-dialog-actions">
+              <button className="soft-action" onClick={() => setIsPublishConfirmOpen(false)} disabled={isPublishing}>
+                ביטול
+              </button>
+              <button className="primary-button publish-confirm" onClick={publishSchedule} disabled={isPublishing}>
+                <Send size={16} />
+                {isPublishing ? "שולח..." : schedule.publishedAt ? "שליחת עדכון" : "פרסום ושליחה"}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
       {pendingReplacement ? (
         <div className="modal-backdrop" role="presentation">

@@ -30,6 +30,15 @@ export function getAvailabilityWeekStart(date = new Date()): string {
   return addDays(getSundayWeekStart(date), 14);
 }
 
+/** A real calendar date in YYYY-MM-DD form that falls on a Sunday (a schedule week start). */
+export function isSundayDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && toDateOnly(date) === value && date.getUTCDay() === 0;
+}
+
 export function addDays(dateOnly: string, days: number): string {
   const date = new Date(`${dateOnly}T00:00:00.000Z`);
   return toDateOnly(new Date(date.getTime() + days * DAY_MS));
