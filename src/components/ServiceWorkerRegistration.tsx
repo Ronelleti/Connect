@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+// Loaded here, on every page, so the Android install window is captured whichever page fires it.
+import "@/hooks/useInstallApp";
 
 // Registers the service worker that makes the site installable as an app and receives
 // push notifications.

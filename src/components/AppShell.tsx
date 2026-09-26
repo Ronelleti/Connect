@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarDays, FileText, Inbox, LayoutDashboard, LogOut, UserRound, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
+import { InstallAppBanner, InstallAppButton } from "./InstallApp";
 import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 import type { User } from "@/lib/types";
@@ -60,6 +61,7 @@ export function AppShell({
             <span>connect</span>
           </div>
           <div className="topbar-actions">
+            <InstallAppButton />
             <NotificationBell />
             <span className="user-pill">
               <UserRound size={18} />
@@ -71,7 +73,10 @@ export function AppShell({
             </button>
           </div>
         </header>
-        <main className="scheduler-page">{children}</main>
+        <main className="scheduler-page">
+          <InstallAppBanner />
+          {children}
+        </main>
       </div>
     </div>
   );

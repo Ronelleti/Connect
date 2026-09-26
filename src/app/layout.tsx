@@ -25,7 +25,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#10141b"
+  themeColor: "#10141b",
+  // Lets the phone bottom bar use env(safe-area-inset-bottom) to clear the iPhone home indicator.
+  viewportFit: "cover"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -34,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem("wecomconnect-theme");document.documentElement.dataset.theme=t||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch(e){}`
+            __html: `try{var t=localStorage.getItem("wecomconnect-theme");document.documentElement.dataset.theme=t||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch(e){}addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.__wecomInstallPrompt=e})`
           }}
         />
         {children}

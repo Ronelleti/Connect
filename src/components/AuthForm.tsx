@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { InstallAppBanner } from "./InstallApp";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function AuthForm() {
@@ -72,6 +73,7 @@ export function AuthForm() {
           </button>
         </form>
       </section>
+      <InstallAppBanner />
     </main>
   );
 }
