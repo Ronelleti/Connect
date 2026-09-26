@@ -43,9 +43,20 @@ The seed creates local manager and employee fixtures using `DEMO_PASSWORD`
 
 1. Connect this GitHub repository to a new Netlify project.
 2. In the project, open **Database** and initialize Netlify Database, or run `netlify database init --yes` from a linked checkout.
-3. Add a strong `AUTH_SECRET` under **Project configuration → Environment variables**.
-4. Deploy the branch. Netlify detects `@netlify/database`, provisions PostgreSQL, and applies the SQL files under `netlify/database/migrations/` before publishing.
-5. Create the first manager once with `npm run db:create-admin`, using the production database connection temporarily as `DATABASE_URL` and setting `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` locally.
+3. Add these under **Project configuration → Environment variables** (redeploy after any change; values only apply to deploys made after they're set):
+
+   | Variable | What it is | How to get it |
+   | --- | --- | --- |
+   | `AUTH_SECRET` | Signs and encrypts login sessions. Required. | Any long random value, e.g. `openssl rand -hex 32`. |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | The key pair that identifies this server to Apple's and Google's push services, for phone notifications. The private key is secret. | Run `npx web-push generate-vapid-keys` once, on any computer, and keep both values (e.g. in a password manager). Changing them later makes every user re-enable notifications from the bell. |
+   | `VAPID_SUBJECT` | A contact address sent to the push services with each notification; users never see it. | `mailto:` plus your email, e.g. `mailto:you@example.com`. |
+   | `CRON_SECRET` | A password the Sunday availability-reminder function sends to `/api/cron/availability-reminder`, so nobody else can trigger the reminder. Without it the reminder doesn't run. | Make one up, e.g. `openssl rand -hex 32`. Only needs to be set in Netlify. |
+   | `FILES_ACCESS_CODE` | The code everyone types once to open the Files page. Without it the page stays locked. | Choose it yourself. |
+
+   `DATABASE_URL` isn't needed on Netlify (Netlify Database provides the connection), and `URL` (the site address used by the scheduled function) is set by Netlify automatically.
+4. Deploy the branch. Netlify detects `@netlify/database`, provisions PostgreSQL, and applies the SQL files under `netlify/database/migrations/` before publishing. The scheduled reminder only runs on the published production deploy, not on branch or preview deploys.
+5. Create the first manager once with `npm run db:create-admin`, using the production database connection temporarily as `DATABASE_URL` and setting `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` locally. The demo accounts from `npm run db:seed` exist only locally; the seed script refuses to run in production.
+6. On each phone, open the Netlify address, install the app from the "התקנה" banner, sign in, and turn on notifications from the bell. An app installed from another address (e.g. a local tunnel) must be removed and installed again.
 
 Public registration is disabled. Managers create employee accounts from the dashboard;
 the first manager is bootstrapped once with the production-safe admin script.
@@ -63,15 +74,13 @@ the first manager is bootstrapped once with the production-safe admin script.
 - Managers can export a UTF-8 CSV table containing employee, day, date, shift, time, and weekly totals.
 - Swap requests can be reviewed by the target employee and manager in either order. A rejection closes the request immediately; after both approve, the assignment is applied automatically.
 - Only one active swap request is allowed per source assignment; older duplicate requests are closed automatically when the database is migrated.
-- If `MANAGER_APPROVAL_EMAIL` is configured, submitting a swap request emails that address with one-click approve/decline links, so a manager can respond without opening the app. The link only shows a confirmation page on click; the decision itself is applied when that confirmation is submitted, so link-prefetching by email scanners can't silently approve or decline a swap. This is an additional channel — the in-app manager approval buttons work exactly as before, and the swap is still only applied once both the target employee and a manager (via either channel) have approved.
 - Managers can auto-generate a week's schedule with one click. The generator only fills currently empty shifts (existing assignments are left untouched) and, for each empty shift, prefers an employee who marked it as preferred, honors `UNAVAILABLE`/`חופש` blocks, and never exceeds an employee's weekly shift cap. It aims for at least 16 hours of rest (two other shifts) between any two of an employee's shifts; only when no employee can otherwise cover a shift does it fall back to 8 hours of rest. It never schedules back-to-back shifts, including across the week boundary; if a shift can't be covered with at least 8 hours of rest, it is left unfilled. Any shift nobody can cover is left unfilled and reported for manual assignment.
 
 ## Personal Dashboard and Shared Files
 
 - After login, employees land on a personal dashboard (`/`) showing their name, shift count and hours worked this week and this month, and their next upcoming shift. Managers without a linked employee record see a simplified version pointing them to the schedule. The full schedule grid moved to `/schedule`; navigate between the dashboard, schedule, and files from the icon rail.
 - `/files` is a shared library where any signed-in user can upload a PDF, Word (`.docx`), Excel (`.xlsx`/`.xlsm`), CSV, or text file (5MB limit) for everyone to view and download. A file can be deleted by whoever uploaded it or by any manager.
-- The Files page is gated behind a shared access code (`FILES_ACCESS_CODE`): every user must enter it once before they can view, ask about, or download anything there. Entering it correctly unlocks the page for 30 days per browser. If the code isn't configured, the page stays locked for everyone rather than opening by default.
-- If `ANTHROPIC_API_KEY` is configured, each file gets an "ask a question" thread where anyone can ask about its content and get an AI-generated answer based only on the extracted text; the question and answer are saved so others can see the thread. Without that key, uploads/downloads still work, but asking a question returns a clear "not configured" message instead of an answer.
+- The Files page is gated behind a shared access code (`FILES_ACCESS_CODE`): every user must enter it once before they can view or download anything there. Entering it correctly unlocks the page for 30 days per browser. If the code isn't configured, the page stays locked for everyone rather than opening by default.
 
 ## Notifications, Requests and the Phone App
 

@@ -6,24 +6,18 @@ import {
   FileSpreadsheet,
   FileText,
   Lock,
-  MessageCircleQuestion,
-  Send,
   Trash2,
   Upload
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "./AppShell";
-import type { FileQuestion, SharedFile, User } from "@/lib/types";
+import type { SharedFile, User } from "@/lib/types";
 
 export function FilesLibrary({ currentUser }: { currentUser: User }) {
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [toast, setToast] = useState("");
-  const [expandedFileId, setExpandedFileId] = useState<string | null>(null);
-  const [questionsByFile, setQuestionsByFile] = useState<Record<string, FileQuestion[]>>({});
-  const [draftByFile, setDraftByFile] = useState<Record<string, string>>({});
-  const [askingFileId, setAskingFileId] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   const [accessCode, setAccessCode] = useState("");
   const [isUnlocking, setIsUnlocking] = useState(false);
@@ -111,53 +105,6 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
     setFiles((current) => current.filter((item) => item.id !== file.id));
   }
 
-  async function toggleQuestions(fileId: string) {
-    if (expandedFileId === fileId) {
-      setExpandedFileId(null);
-      return;
-    }
-    setExpandedFileId(fileId);
-    if (!questionsByFile[fileId]) {
-      const response = await fetch(`/api/files/${fileId}/questions`, { cache: "no-store" });
-      if (response.status === 423) {
-        setIsLocked(true);
-      } else if (response.ok) {
-        const body = (await response.json()) as { questions: FileQuestion[] };
-        setQuestionsByFile((current) => ({ ...current, [fileId]: body.questions }));
-      }
-    }
-  }
-
-  async function handleAsk(fileId: string) {
-    const question = (draftByFile[fileId] ?? "").trim();
-    if (!question || askingFileId) {
-      return;
-    }
-
-    setAskingFileId(fileId);
-    const response = await fetch(`/api/files/${fileId}/questions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question })
-    });
-    const body = await response.json();
-    setAskingFileId(null);
-
-    if (!response.ok) {
-      if (response.status === 423) {
-        setIsLocked(true);
-      }
-      setToast(body.error ?? "שליחת השאלה נכשלה.");
-      return;
-    }
-
-    setDraftByFile((current) => ({ ...current, [fileId]: "" }));
-    setQuestionsByFile((current) => ({
-      ...current,
-      [fileId]: [...(current[fileId] ?? []), body.question as FileQuestion]
-    }));
-  }
-
   return (
     <AppShell currentUser={currentUser} active="files">
       <section className="schedule-toolbar">
@@ -175,7 +122,7 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
             <Lock size={22} />
           </div>
           <h2>נדרש קוד גישה</h2>
-          <p>יש להזין את קוד הגישה לקבצים המשותפים כדי לצפות, לשאול שאלות ולהוריד קבצים.</p>
+          <p>יש להזין את קוד הגישה לקבצים המשותפים כדי לצפות ולהוריד קבצים.</p>
           <form onSubmit={handleUnlock} className="files-lock-form">
             <input
               type="password"
@@ -220,13 +167,6 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
                       <a className="icon-button" href={`/api/files/${file.id}/download`} title="הורדה">
                         <Download size={16} />
                       </a>
-                      <button
-                        className="icon-button"
-                        title="שאלה על הקובץ"
-                        onClick={() => toggleQuestions(file.id)}
-                      >
-                        <MessageCircleQuestion size={16} />
-                      </button>
                       {file.uploadedByUserId === currentUser.id || currentUser.role === "MANAGER" ? (
                         <button
                           className="icon-button"
@@ -239,55 +179,6 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
                     </div>
                   </div>
 
-                  {expandedFileId === file.id ? (
-                    <div className="file-qa-panel">
-                      {!file.hasExtractedText ? (
-                        <p className="file-qa-hint">
-                          לא ניתן היה לחלץ טקסט מהקובץ הזה לצורך מענה אוטומטי.
-                        </p>
-                      ) : null}
-                      <div className="file-qa-thread">
-                        {(questionsByFile[file.id] ?? []).map((item) => (
-                          <div className="file-qa-item" key={item.id}>
-                            <p className="file-qa-question">
-                              <strong>{item.askedByName}:</strong> {item.question}
-                            </p>
-                            <p className="file-qa-answer">{item.answer}</p>
-                          </div>
-                        ))}
-                        {(questionsByFile[file.id] ?? []).length === 0 ? (
-                          <p className="file-qa-hint">אין עדיין שאלות על הקובץ הזה.</p>
-                        ) : null}
-                      </div>
-                      <div className="file-qa-input">
-                        <input
-                          type="text"
-                          placeholder="שאלו שאלה על תוכן הקובץ..."
-                          value={draftByFile[file.id] ?? ""}
-                          onChange={(event) =>
-                            setDraftByFile((current) => ({
-                              ...current,
-                              [file.id]: event.target.value
-                            }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              void handleAsk(file.id);
-                            }
-                          }}
-                        />
-                        <button
-                          className="icon-button"
-                          disabled={askingFileId === file.id}
-                          onClick={() => handleAsk(file.id)}
-                          title="שליחה"
-                        >
-                          <Send size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
                 </article>
               ))}
             </div>

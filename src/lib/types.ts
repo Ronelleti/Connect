@@ -118,16 +118,5 @@ export interface SharedFile {
   filename: string;
   contentType: string;
   sizeBytes: number;
-  hasExtractedText: boolean;
-  createdAt: string;
-}
-
-export interface FileQuestion {
-  id: string;
-  fileId: string;
-  askedByUserId: string | null;
-  askedByName: string;
-  question: string;
-  answer: string;
   createdAt: string;
 }

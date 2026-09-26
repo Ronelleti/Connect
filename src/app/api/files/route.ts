@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { MAX_FILE_SIZE_BYTES, extractTextFromFile } from "@/lib/fileText";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import { hasFilesAccess } from "@/server/filesAccess";
 import { createSharedFile, listSharedFiles } from "@/server/repositories";
+
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 
 export async function GET() {
   const user = await requireApiUser();
@@ -43,7 +44,6 @@ export async function POST(request: Request) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const contentType = file.type || "application/octet-stream";
-  const extractedText = await extractTextFromFile(buffer, file.name, contentType);
 
   const sharedFile = await createSharedFile({
     uploadedByUserId: user.id,
@@ -51,7 +51,6 @@ export async function POST(request: Request) {
     filename: file.name,
     contentType,
     sizeBytes: file.size,
-    extractedText,
     data: buffer
   });
 

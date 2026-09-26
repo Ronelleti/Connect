@@ -10,7 +10,7 @@ import {
   listAvailabilityBlocks,
   listEmployees
 } from "@/server/repositories";
-import { notifyManagerOfSwapRequest, notifySwapRequested } from "@/server/swapNotifications";
+import { notifySwapRequested } from "@/server/swapNotifications";
 
 export async function POST(request: Request) {
   const user = await requireApiUser();
@@ -138,11 +138,6 @@ export async function POST(request: Request) {
     return jsonError("כבר קיימת בקשת החלפה פעילה למשמרת הזו.", 409);
   }
 
-  try {
-    await notifyManagerOfSwapRequest(swap, new URL(request.url).origin);
-  } catch (error) {
-    console.error("Failed to send swap approval email", error);
-  }
   await notifySwapRequested(swap);
 
   return NextResponse.json({ swap, validation: { errors: [], warnings } }, { status: 201 });
