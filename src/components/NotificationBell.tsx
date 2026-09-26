@@ -203,6 +203,16 @@ function PushPrompt({
       <p className="notification-push-hint">ההתראות חסומות בדפדפן. אפשר לאפשר אותן בהגדרות האתר.</p>
     );
   }
+  if (state === "on") {
+    return <p className="notification-push-hint">התראות בטלפון / במחשב פעילות במכשיר זה.</p>;
+  }
+  if (state === "not-configured") {
+    return (
+      <p className="notification-push-hint">
+        התראות לטלפון עדיין לא הוגדרו במערכת (חסרים מפתחות VAPID בשרת). ההתראות יופיעו כאן בינתיים.
+      </p>
+    );
+  }
   return null;
 }
 
