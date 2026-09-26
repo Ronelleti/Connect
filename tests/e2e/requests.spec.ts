@@ -140,28 +140,10 @@ test("vacation request: approval removes shifts and notifies the employee", asyn
   }
 });
 
-test("salary page: employee sets a wage and sees an estimate", async ({ browser }) => {
-  const noa = await signedInPage(browser, "noa");
-  try {
-    await noa.goto("/salary");
-    await expect(noa.getByRole("heading", { name: "הערכת שכר" })).toBeVisible();
-    await noa.getByLabel("שכר שעתי (₪)").fill("48");
-    await noa.getByRole("button", { name: "שמירה" }).click();
-    await expect(noa.getByText("הפרטים נשמרו.")).toBeVisible();
-    await expect(noa.getByText("ברוטו משוער")).toBeVisible();
-    await expect(noa.getByText("מועד תשלום")).toBeVisible();
-    // Browsing to the previous pay period keeps the page working.
-    await noa.getByTitle("תקופה קודמת").click();
-    await expect(noa.getByText("ברוטו משוער")).toBeVisible();
-  } finally {
-    await noa.context().close();
-  }
-});
-
 test("phone layout: bottom navigation and notification panel fit the screen", async ({ browser }) => {
   const noa = await signedInPage(browser, "noa", { width: 390, height: 844 });
   try {
-    for (const path of ["/", "/schedule", "/requests", "/salary"]) {
+    for (const path of ["/", "/schedule", "/requests"]) {
       await noa.goto(path);
       const rail = noa.locator(".icon-rail");
       await expect(rail).toBeVisible();

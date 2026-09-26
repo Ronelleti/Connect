@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, FileText, Inbox, LayoutDashboard, LogOut, UserRound, Wallet } from "lucide-react";
+import { CalendarDays, FileText, Inbox, LayoutDashboard, LogOut, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { InstallAppBanner, InstallAppButton } from "./InstallApp";
 import { NotificationBell } from "./NotificationBell";
@@ -16,7 +16,7 @@ export function AppShell({
   children
 }: {
   currentUser: User;
-  active: "home" | "schedule" | "files" | "salary" | "requests";
+  active: "home" | "schedule" | "files" | "requests";
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -45,9 +45,6 @@ export function AppShell({
         </Link>
         <Link href="/requests" title="בקשות" className={`rail-button ${active === "requests" ? "active" : ""}`}>
           <Inbox size={20} />
-        </Link>
-        <Link href="/salary" title="הערכת שכר" className={`rail-button ${active === "salary" ? "active" : ""}`}>
-          <Wallet size={20} />
         </Link>
         <Link href="/files" title="קבצים" className={`rail-button ${active === "files" ? "active" : ""}`}>
           <FileText size={20} />
