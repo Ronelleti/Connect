@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+// The tests expect the demo data (`npm run db:seed -- --reset`) and a running app.
+// E2E_BASE_URL and CHROME_PATH override the defaults below.
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -7,10 +9,10 @@ export default defineConfig({
   reporter: "line",
   outputDir: "/tmp/wecomconnect-playwright",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000",
     locale: "he-IL",
     launchOptions: {
-      executablePath: "/usr/bin/google-chrome"
+      executablePath: process.env.CHROME_PATH ?? "/usr/bin/google-chrome"
     }
   }
 });

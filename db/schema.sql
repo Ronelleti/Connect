@@ -1,55 +1,189 @@
+-- Wecom Support & Sales: shift scheduling for departments split into teams, where each
+-- team defines its own shifts and how many people each one needs.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+CREATE TABLE IF NOT EXISTS departments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- color_slot picks the team's fixed color (1-8) so it keeps the same color in every chart.
+CREATE TABLE IF NOT EXISTS teams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  department_id UUID NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color_slot INTEGER NOT NULL DEFAULT 1 CHECK (color_slot BETWEEN 1 AND 8),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (department_id, name)
+);
+
+-- Everyone who signs in. A department manager belongs to a department; team leads and
+-- employees also belong to a team. Weekly hour limits guide scheduling.
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('MANAGER', 'EMPLOYEE')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS employees (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID UNIQUE REFERENCES users(id) ON DELETE SET NULL,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
-  role_title TEXT NOT NULL DEFAULT 'Employee',
-  weekly_min_shifts INTEGER NOT NULL DEFAULT 1,
-  weekly_max_shifts INTEGER NOT NULL DEFAULT 6,
+  role TEXT NOT NULL DEFAULT 'EMPLOYEE'
+    CHECK (role IN ('ADMIN', 'DEPARTMENT_MANAGER', 'TEAM_LEAD', 'EMPLOYEE')),
+  department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+  team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+  title TEXT NOT NULL DEFAULT '',
+  weekly_min_hours INTEGER NOT NULL DEFAULT 0 CHECK (weekly_min_hours >= 0),
+  weekly_max_hours INTEGER NOT NULL DEFAULT 45 CHECK (weekly_max_hours > 0),
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS availability_blocks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  week_start DATE NOT NULL,
-  day_index INTEGER NOT NULL CHECK (day_index BETWEEN 0 AND 6),
-  shift_type TEXT CHECK (shift_type IN ('MORNING', 'EVENING', 'NIGHT')),
-  starts_at TIME,
-  ends_at TIME,
-  reason TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'UNAVAILABLE' CHECK (status IN ('UNAVAILABLE', 'PREFERRED', 'TIME_OFF')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (
-    status = 'TIME_OFF' OR shift_type IS NOT NULL OR (starts_at IS NOT NULL AND ends_at IS NOT NULL)
-  )
+CREATE INDEX IF NOT EXISTS users_team_idx ON users (team_id);
+CREATE INDEX IF NOT EXISTS users_department_idx ON users (department_id);
+
+-- Extra permissions an admin switches on for one person, on top of their role's defaults.
+CREATE TABLE IF NOT EXISTS user_permissions (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL CHECK (permission IN (
+    'schedule.edit', 'schedule.publish', 'requests.approve', 'reports.view',
+    'shifts.configure', 'people.manage', 'department.view'
+  )),
+  PRIMARY KEY (user_id, permission)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS availability_blocks_shift_unique
-  ON availability_blocks (employee_id, week_start, day_index, shift_type)
-  WHERE shift_type IS NOT NULL;
+-- A team's shift types. ends_at earlier than starts_at means the shift ends the next day.
+-- weekdays is a bit mask: bit 0 = Sunday ... bit 6 = Saturday. Shifts are archived
+-- (is_active = false) rather than deleted, so past schedules keep their shift.
+CREATE TABLE IF NOT EXISTS shift_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  starts_at TIME NOT NULL,
+  ends_at TIME NOT NULL,
+  required_count INTEGER NOT NULL DEFAULT 1 CHECK (required_count BETWEEN 0 AND 200),
+  weekdays INTEGER NOT NULL DEFAULT 127 CHECK (weekdays BETWEEN 0 AND 127),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (starts_at <> ends_at)
+);
 
+CREATE INDEX IF NOT EXISTS shift_templates_team_idx ON shift_templates (team_id, sort_order);
+
+-- One person on one shift on one date. Many people can share a shift. The times are
+-- copied from the shift when assigned, so editing a shift later doesn't rewrite history.
 CREATE TABLE IF NOT EXISTS shift_assignments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  week_start DATE NOT NULL,
-  day_index INTEGER NOT NULL CHECK (day_index BETWEEN 0 AND 6),
-  shift_type TEXT NOT NULL CHECK (shift_type IN ('MORNING', 'EVENING', 'NIGHT')),
-  notes TEXT NOT NULL DEFAULT '',
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shift_template_id UUID NOT NULL REFERENCES shift_templates(id) ON DELETE RESTRICT,
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  work_date DATE NOT NULL,
+  starts_at TIME NOT NULL,
+  ends_at TIME NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (week_start, day_index, shift_type)
+  UNIQUE (user_id, work_date, shift_template_id)
+);
+
+CREATE INDEX IF NOT EXISTS shift_assignments_team_date_idx ON shift_assignments (team_id, work_date);
+CREATE INDEX IF NOT EXISTS shift_assignments_user_date_idx ON shift_assignments (user_id, work_date);
+
+-- Availability for one date: for one shift (shift_template_id set) or the whole day.
+CREATE TABLE IF NOT EXISTS availability_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  work_date DATE NOT NULL,
+  shift_template_id UUID REFERENCES shift_templates(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('UNAVAILABLE', 'PREFERRED', 'TIME_OFF')),
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (status <> 'TIME_OFF' OR shift_template_id IS NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS availability_entries_shift_unique
+  ON availability_entries (user_id, work_date, shift_template_id)
+  WHERE shift_template_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS availability_entries_day_unique
+  ON availability_entries (user_id, work_date)
+  WHERE shift_template_id IS NULL;
+
+-- Someone finished filling in a week (so the Sunday reminder skips them).
+CREATE TABLE IF NOT EXISTS availability_submissions (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  week_start DATE NOT NULL,
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, week_start)
+);
+
+-- Swap requests: the requester hands over one of their shifts to a colleague, optionally
+-- taking one of the colleague's shifts in return. The colleague accepts, then someone who
+-- can approve requests for that team approves. Snapshots keep the history readable.
+CREATE TABLE IF NOT EXISTS swap_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_assignment_id UUID REFERENCES shift_assignments(id) ON DELETE SET NULL,
+  target_assignment_id UUID REFERENCES shift_assignments(id) ON DELETE SET NULL,
+  requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  shift_label TEXT NOT NULL,
+  target_shift_label TEXT,
+  status TEXT NOT NULL DEFAULT 'PENDING_EMPLOYEE' CHECK (status IN (
+    'PENDING_EMPLOYEE', 'DECLINED_BY_EMPLOYEE', 'PENDING_MANAGER', 'DECLINED_BY_MANAGER',
+    'CANCELLED', 'APPROVED'
+  )),
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  employee_decided_at TIMESTAMPTZ,
+  manager_decided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS swap_requests_one_active_per_assignment
+  ON swap_requests (requester_assignment_id)
+  WHERE status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER');
+
+-- Giveaway board: someone offers a shift to their team, a teammate takes it, and someone
+-- who can approve requests for that team approves the handover.
+CREATE TABLE IF NOT EXISTS shift_giveaways (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  assignment_id UUID NOT NULL REFERENCES shift_assignments(id) ON DELETE CASCADE,
+  offered_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  taken_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (
+    status IN ('OPEN', 'PENDING_MANAGER', 'APPROVED', 'DECLINED_BY_MANAGER', 'CANCELLED')
+  ),
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  taken_at TIMESTAMPTZ,
+  decided_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS shift_giveaways_one_active_per_assignment
+  ON shift_giveaways (assignment_id)
+  WHERE status IN ('OPEN', 'PENDING_MANAGER');
+
+-- Vacation requests: approval marks the days as time off and removes the person's shifts.
+CREATE TABLE IF NOT EXISTS vacation_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'DECLINED', 'CANCELLED')),
+  removed_shift_count INTEGER NOT NULL DEFAULT 0,
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ,
+  CHECK (end_date >= start_date)
+);
+
+CREATE INDEX IF NOT EXISTS vacation_requests_user_idx ON vacation_requests (user_id, start_date);
+
+-- A team's week that was published: its members were notified with their shifts.
+CREATE TABLE IF NOT EXISTS published_weeks (
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  week_start DATE NOT NULL,
+  published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  published_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  PRIMARY KEY (team_id, week_start)
 );
 
 CREATE TABLE IF NOT EXISTS auth_login_attempts (
@@ -57,121 +191,6 @@ CREATE TABLE IF NOT EXISTS auth_login_attempts (
   failed_count INTEGER NOT NULL DEFAULT 0,
   first_failed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_failed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS shift_swap_requests (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  requester_assignment_id UUID REFERENCES shift_assignments(id) ON DELETE SET NULL,
-  target_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  target_assignment_id UUID REFERENCES shift_assignments(id) ON DELETE SET NULL,
-  requester_employee_id_snapshot UUID,
-  requester_employee_name_snapshot TEXT,
-  target_employee_name_snapshot TEXT,
-  week_start_snapshot DATE,
-  day_index_snapshot INTEGER,
-  shift_type_snapshot TEXT,
-  target_day_index_snapshot INTEGER,
-  target_shift_type_snapshot TEXT,
-  status TEXT NOT NULL CHECK (
-    status IN ('PENDING_EMPLOYEE', 'DECLINED_BY_EMPLOYEE', 'PENDING_MANAGER', 'DECLINED_BY_MANAGER', 'SUPERSEDED', 'APPROVED')
-  ) DEFAULT 'PENDING_EMPLOYEE',
-  employee_decided_at TIMESTAMPTZ,
-  manager_decided_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-ALTER TABLE shift_swap_requests
-  DROP CONSTRAINT IF EXISTS shift_swap_requests_status_check;
-ALTER TABLE shift_swap_requests
-  ADD CONSTRAINT shift_swap_requests_status_check
-  CHECK (status IN ('PENDING_EMPLOYEE', 'DECLINED_BY_EMPLOYEE', 'PENDING_MANAGER', 'DECLINED_BY_MANAGER', 'SUPERSEDED', 'APPROVED'));
-
-WITH ranked_active_swaps AS (
-  SELECT id,
-         ROW_NUMBER() OVER (
-           PARTITION BY requester_assignment_id
-           ORDER BY
-             (CASE WHEN employee_decided_at IS NOT NULL THEN 1 ELSE 0 END +
-              CASE WHEN manager_decided_at IS NOT NULL THEN 1 ELSE 0 END) DESC,
-             created_at DESC,
-             id DESC
-         ) AS position
-  FROM shift_swap_requests
-  WHERE requester_assignment_id IS NOT NULL
-    AND status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER')
-)
-UPDATE shift_swap_requests swaps
-SET status = 'SUPERSEDED'
-FROM ranked_active_swaps ranked
-WHERE swaps.id = ranked.id
-  AND ranked.position > 1;
-
-CREATE UNIQUE INDEX IF NOT EXISTS shift_swap_requests_active_assignment_unique
-  ON shift_swap_requests (requester_assignment_id)
-  WHERE status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER');
-
--- Existing installations need their original Sunday-Thursday constraints widened.
-ALTER TABLE availability_blocks
-  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'UNAVAILABLE';
-ALTER TABLE availability_blocks
-  DROP CONSTRAINT IF EXISTS availability_blocks_status_check;
-ALTER TABLE availability_blocks
-  ADD CONSTRAINT availability_blocks_status_check
-  CHECK (status IN ('UNAVAILABLE', 'PREFERRED', 'TIME_OFF'));
-ALTER TABLE availability_blocks
-  DROP CONSTRAINT IF EXISTS availability_blocks_check;
-ALTER TABLE availability_blocks
-  DROP CONSTRAINT IF EXISTS availability_blocks_window_check;
-ALTER TABLE availability_blocks
-  ADD CONSTRAINT availability_blocks_window_check
-  CHECK (status = 'TIME_OFF' OR shift_type IS NOT NULL OR (starts_at IS NOT NULL AND ends_at IS NOT NULL));
-CREATE UNIQUE INDEX IF NOT EXISTS availability_blocks_time_off_unique
-  ON availability_blocks (employee_id, week_start, day_index)
-  WHERE status = 'TIME_OFF';
-
-ALTER TABLE availability_blocks
-  DROP CONSTRAINT IF EXISTS availability_blocks_day_index_check;
-ALTER TABLE availability_blocks
-  ADD CONSTRAINT availability_blocks_day_index_check CHECK (day_index BETWEEN 0 AND 6);
-
-ALTER TABLE shift_assignments
-  DROP CONSTRAINT IF EXISTS shift_assignments_day_index_check;
-ALTER TABLE shift_assignments
-  ADD CONSTRAINT shift_assignments_day_index_check CHECK (day_index BETWEEN 0 AND 6);
-
-UPDATE employees SET weekly_max_shifts = 6 WHERE weekly_max_shifts <> 6;
-
-CREATE TABLE IF NOT EXISTS shared_files (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  uploaded_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  uploaded_by_name TEXT NOT NULL,
-  filename TEXT NOT NULL,
-  content_type TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  extracted_text TEXT NOT NULL DEFAULT '',
-  data BYTEA NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS file_questions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  file_id UUID NOT NULL REFERENCES shared_files(id) ON DELETE CASCADE,
-  asked_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  asked_by_name TEXT NOT NULL,
-  question TEXT NOT NULL,
-  answer TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS file_questions_file_id_idx ON file_questions (file_id);
-
--- Each employee sets their own hourly wage for the salary estimate. Kept out of the
--- employees table so it is never exposed through the manager-facing employee APIs.
-CREATE TABLE IF NOT EXISTS employee_pay_settings (
-  employee_id UUID PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
-  hourly_wage NUMERIC(10, 2) NOT NULL CHECK (hourly_wage > 0),
-  tax_credit_points NUMERIC(5, 2) NOT NULL DEFAULT 2.25 CHECK (tax_credit_points >= 0),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- In-app notifications (the bell) and the Web Push subscriptions used to deliver them
@@ -186,8 +205,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS notifications_user_created_idx
-  ON notifications (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -198,58 +216,13 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Shift giveaway board: an employee offers one of their shifts, another employee takes
--- it, and a manager approves the handover.
-CREATE TABLE IF NOT EXISTS shift_giveaways (
+CREATE TABLE IF NOT EXISTS shared_files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  assignment_id UUID NOT NULL REFERENCES shift_assignments(id) ON DELETE CASCADE,
-  offered_by_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  taken_by_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
-  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (
-    status IN ('OPEN', 'PENDING_MANAGER', 'APPROVED', 'DECLINED_BY_MANAGER', 'CANCELLED')
-  ),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  taken_at TIMESTAMPTZ,
-  decided_at TIMESTAMPTZ
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS shift_giveaways_one_active_per_assignment
-  ON shift_giveaways (assignment_id)
-  WHERE status IN ('OPEN', 'PENDING_MANAGER');
-
--- Vacation requests: approved requests become full-day vacation (TIME_OFF) availability
--- and remove the employee's shifts on those days.
-CREATE TABLE IF NOT EXISTS vacation_requests (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  start_date DATE NOT NULL,
-  end_date DATE NOT NULL,
-  note TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-    status IN ('PENDING', 'APPROVED', 'DECLINED', 'CANCELLED')
-  ),
-  removed_shift_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  decided_at TIMESTAMPTZ,
-  CHECK (end_date >= start_date)
-);
-
-CREATE INDEX IF NOT EXISTS vacation_requests_employee_idx
-  ON vacation_requests (employee_id, start_date);
-
--- Records that an employee finished filling in their availability for a week (either by
--- confirming it or by changing any of it), so the weekly reminder skips them.
-CREATE TABLE IF NOT EXISTS availability_submissions (
-  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  week_start DATE NOT NULL,
-  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (employee_id, week_start)
-);
-
--- Weeks a manager published: every employee was notified that the week's schedule is
--- ready. Publishing again updates the time and sends an "updated schedule" notification.
-CREATE TABLE IF NOT EXISTS published_weeks (
-  week_start DATE PRIMARY KEY,
-  published_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  published_by UUID REFERENCES users(id) ON DELETE SET NULL
+  uploaded_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  uploaded_by_name TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  data BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

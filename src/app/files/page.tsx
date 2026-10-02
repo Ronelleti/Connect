@@ -1,19 +1,7 @@
-import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/server/session";
-import { findUserById, toUser } from "@/server/repositories";
 import { FilesLibrary } from "@/components/FilesLibrary";
+import { getShellContext } from "@/server/shell";
 
 export default async function FilesPage() {
-  const sessionUser = await getCurrentUser();
-
-  if (!sessionUser) {
-    redirect("/login");
-  }
-  const userRow = await findUserById(sessionUser.id);
-  if (!userRow) {
-    redirect("/login");
-  }
-  const user = toUser(userRow);
-
-  return <FilesLibrary currentUser={user} />;
+  const { user, nav, teams, teamName } = await getShellContext();
+  return <FilesLibrary user={user} nav={nav} teamName={teamName} teamColorSlot={teams.find((team) => team.id === user.teamId)?.colorSlot ?? null} />;
 }

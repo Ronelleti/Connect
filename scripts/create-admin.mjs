@@ -3,6 +3,13 @@ import { promisify } from "node:util";
 import process from "node:process";
 import pg from "pg";
 
+// Use the local .env when there is one (values already in the environment win).
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // No .env file: rely on the environment.
+}
+
 const scryptAsync = promisify(scrypt);
 const databaseUrl = process.env.DATABASE_URL ?? process.env.NETLIFY_DB_URL;
 const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -29,13 +36,13 @@ const client = new pg.Client({ connectionString: databaseUrl });
 await client.connect();
 await client.query(
   `INSERT INTO users (email, name, password_hash, role)
-   VALUES ($1, $2, $3, 'MANAGER')
+   VALUES ($1, $2, $3, 'ADMIN')
    ON CONFLICT (email) DO UPDATE SET
     name = EXCLUDED.name,
     password_hash = EXCLUDED.password_hash,
-    role = 'MANAGER'`,
+    role = 'ADMIN'`,
   [email, name, await hashPassword(password)]
 );
 await client.end();
 
-console.log(`Manager account is ready for ${email}.`);
+console.log(`Admin account is ready for ${email}.`);

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import { hasFilesAccess } from "@/server/filesAccess";
-import { findSharedFileWithData } from "@/server/repositories";
+import { findSharedFileWithData } from "@/server/files";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();

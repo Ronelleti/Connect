@@ -11,8 +11,8 @@ const heebo = Heebo({
 });
 
 export const metadata: Metadata = {
-  title: "Wecomconnect",
-  description: "Shift scheduling for three-shift teams",
+  title: "Wecom · תמיכה ומכירות",
+  description: "Shift scheduling for support and sales teams",
   icons: {
     icon: "/wecom-logo.svg",
     apple: "/icons/apple-touch-icon.png"

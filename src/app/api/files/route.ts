@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import { hasFilesAccess } from "@/server/filesAccess";
-import { createSharedFile, listSharedFiles } from "@/server/repositories";
+import { createSharedFile, listSharedFiles } from "@/server/files";
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 

@@ -118,22 +118,6 @@ export async function notifyUsers(userIds: (string | null | undefined)[], messag
   }
 }
 
-export async function listManagerUserIds(): Promise<string[]> {
-  const rows = await query<{ id: string }>("SELECT id FROM users WHERE role = 'MANAGER'");
-  return rows.map((row) => row.id);
-}
-
-export async function findUserIdForEmployee(employeeId: string | null | undefined) {
-  if (!employeeId) {
-    return null;
-  }
-  const [row] = await query<{ user_id: string | null }>(
-    "SELECT user_id FROM employees WHERE id = $1",
-    [employeeId]
-  );
-  return row?.user_id ?? null;
-}
-
 export async function listNotifications(userId: string, limit = 30) {
   const [rows, [unread]] = await Promise.all([
     query<NotificationRow>(

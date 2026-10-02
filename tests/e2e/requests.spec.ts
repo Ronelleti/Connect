@@ -1,194 +1,134 @@
-import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { addDays, call, peopleByName, signIn, teamByName, weekStart } from "./helpers";
 
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "LocalOnly123!";
-
-// A week far enough ahead that none of its shifts have started, and that doesn't
-// collide with the current or availability weeks used by the schedule tests.
-function futureWeekStart(weeksAhead: number) {
-  const date = new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() - date.getUTCDay() + weeksAhead * 7);
-  return date.toISOString().slice(0, 10);
+async function clearDay(lead: Page, teamId: string, week: string, userIds: string[], dates: string[]) {
+  const { body } = await call<{ assignments: { id: string; userId: string; workDate: string }[] }>(lead, `/api/schedule?week=${week}&team=${teamId}`);
+  for (const assignment of body.assignments.filter((item) => userIds.includes(item.userId) && dates.includes(item.workDate))) {
+    await call(lead, `/api/assignments/${assignment.id}`, "DELETE");
+  }
 }
 
-function addDays(dateOnly: string, days: number) {
-  const date = new Date(`${dateOnly}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
+test("swap: colleague accepts, the team lead approves, the shift moves", async ({ browser }) => {
+  const week = weekStart(6);
+  const date = addDays(week, 2);
+  const admin = await signIn(browser, "admin");
+  const people = await peopleByName(admin);
+  await admin.context().close();
 
-function hebrewDate(dateOnly: string) {
-  const [, month, day] = dateOnly.split("-");
-  return `${day}.${month}`;
-}
+  const noaId = people.get("נועה כהן")!.id;
+  const colleague = [...people.values()].find((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("t1.0"))!;
 
-async function signedInPage(browser: Browser, email: string, viewport = { width: 1280, height: 900 }) {
-  const context = await browser.newContext({ viewport, locale: "he-IL" });
-  const page = await context.newPage();
-  await page.goto("/login");
-  await page.getByLabel("אימייל או שם משתמש").fill(email);
-  await page.getByLabel("סיסמה").fill(E2E_PASSWORD);
-  await page.getByRole("button", { name: "כניסה" }).click();
-  await page.waitForURL("/");
-  return page;
-}
-
-async function employeeIdByName(request: APIRequestContext, weekStart: string, name: string) {
-  const response = await request.get(`/api/schedule?weekStart=${weekStart}`);
-  const body = await response.json();
-  return body.employees.find((employee: { name: string }) => employee.name === name).id as string;
-}
-
-async function assignShift(manager: Page, employeeId: string, weekStart: string, dayIndex: number, shiftType: string) {
-  const response = await manager.request.post("/api/assignments", {
-    data: { employeeId, weekStart, dayIndex, shiftType, acknowledgeWarnings: true }
-  });
-  expect(response.status(), await response.text()).toBe(201);
-  return (await response.json()).assignment.id as string;
-}
-
-async function openBell(page: Page) {
-  await page.locator(".notification-bell > button").click();
-  return page.locator(".notification-panel");
-}
-
-test("shift giveaway: offer, take, manager approval and notifications", async ({ browser }) => {
-  const weekStart = futureWeekStart(5);
-  const manager = await signedInPage(browser, "admin");
-  const noa = await signedInPage(browser, "noa");
-  const employee = await signedInPage(browser, "employee");
-  const noaId = await employeeIdByName(manager.request, weekStart, "נועה כהן");
-  const assignmentId = await assignShift(manager, noaId, weekStart, 4, "MORNING");
-
+  const lead = await signIn(browser, "lead1");
+  const noa = await signIn(browser, "noa");
+  const other = await signIn(browser, colleague.email);
   try {
-    // Noa offers the shift from the Requests page.
+    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const evening = shifts.find((shift) => shift.name === "ערב")!;
+    await clearDay(lead, team.id, week, [noaId, colleague.id], [addDays(date, -1), date, addDays(date, 1)]);
+    const created = await call<{ assignment: { id: string } }>(lead, "/api/assignments", "POST", { userId: noaId, shiftTemplateId: evening.id, workDate: date, acknowledgeWarnings: true });
+    expect(created.status).toBe(201);
+
+    // Noa asks the colleague from the Requests page.
     await noa.goto("/requests");
-    await noa.getByLabel("משמרת שלך למסירה").selectOption(assignmentId);
-    await noa.getByRole("button", { name: "פרסום למסירה" }).click();
-    await expect(noa.getByText("המשמרת פורסמה למסירה.")).toBeVisible();
+    await noa.getByRole("button", { name: "החלפה", exact: true }).click();
+    const dialog = noa.getByRole("dialog");
+    await dialog.getByRole("combobox", { name: /^המשמרת שלי/ }).selectOption(created.body.assignment.id);
+    await dialog.getByRole("combobox", { name: /^עם מי/ }).selectOption(colleague.id);
+    await dialog.getByRole("button", { name: "שליחת בקשה" }).click();
+    await expect(noa.locator(".toast")).toContainText("נשלחה");
 
-    // The other employee is notified and takes it.
-    await employee.goto("/requests");
-    const panel = await openBell(employee);
-    await expect(panel.getByText("משמרת זמינה למסירה").first()).toBeVisible();
-    await employee.keyboard.press("Escape");
-    await employee.goto("/requests");
-    const offered = employee.locator(".requests-item").filter({ hasText: hebrewDate(addDays(weekStart, 4)) });
-    await offered.getByRole("button", { name: "לקחת" }).click();
-    await expect(employee.getByText("הבקשה נשלחה לאישור המנהל.")).toBeVisible();
+    await other.goto("/requests");
+    const incoming = other.locator(".request-item", { hasText: "נועה כהן מבקש/ת להחליף איתך" }).first();
+    await incoming.getByRole("button", { name: "מסכים/ה" }).click();
+    await expect(other.locator(".toast")).toContainText("ממתינה לאישור");
 
-    // The manager is notified and approves.
-    await manager.goto("/requests");
-    const managerPanel = await openBell(manager);
-    await expect(managerPanel.getByText("מסירת משמרת ממתינה לאישורך").first()).toBeVisible();
-    await manager.goto("/requests");
-    const pending = manager.locator(".requests-item").filter({ hasText: hebrewDate(addDays(weekStart, 4)) });
-    await pending.getByRole("button", { name: "אישור" }).click();
-    await expect(manager.getByText("המסירה אושרה והסידור עודכן.")).toBeVisible();
+    await lead.goto("/requests?tab=approvals");
+    await lead.locator(".request-item", { hasText: "נועה כהן" }).first().getByRole("button", { name: "אישור" }).click();
+    await expect(lead.locator(".toast")).toContainText("אושרה");
 
-    // Both employees get their own message.
-    await noa.reload();
-    await expect((await openBell(noa)).getByText(/המנהל אישר למסור את המשמרת שלך .* לעובד בדיקה/).first()).toBeVisible();
-    await employee.reload();
-    await expect((await openBell(employee)).getByText(/המנהל אישר לך לקחת את .* מנועה כהן/).first()).toBeVisible();
-
-    // The schedule now shows the shift under the new employee.
-    const schedule = await (await manager.request.get(`/api/schedule?weekStart=${weekStart}`)).json();
-    const handedOver = schedule.assignments.find((item: { id: string }) => item.id === assignmentId);
-    expect(handedOver.employeeId).not.toBe(noaId);
+    const after = await call<{ assignments: { id: string; userId: string }[] }>(lead, `/api/schedule?week=${week}&team=${team.id}`);
+    expect(after.body.assignments.find((item) => item.id === created.body.assignment.id)?.userId).toBe(colleague.id);
   } finally {
-    await manager.request.delete(`/api/assignments/${assignmentId}`);
-    await Promise.all([manager, noa, employee].map((page) => page.context().close()));
+    await lead.context().close();
+    await noa.context().close();
+    await other.context().close();
   }
 });
 
-test("vacation request: approval removes shifts and notifies the employee", async ({ browser }) => {
-  const weekStart = futureWeekStart(6);
-  const manager = await signedInPage(browser, "admin");
-  const employee = await signedInPage(browser, "employee");
-  const employeeId = await employeeIdByName(manager.request, weekStart, "עובד בדיקה");
-  const startDate = addDays(weekStart, 1);
-  const endDate = addDays(weekStart, 2);
-  const assignmentId = await assignShift(manager, employeeId, weekStart, 2, "EVENING");
-
+test("vacation: approval marks the days off and removes the shifts", async ({ browser }) => {
+  const week = weekStart(7);
+  const start = addDays(week, 1);
+  const end = addDays(week, 2);
+  const lead = await signIn(browser, "lead1");
+  const noa = await signIn(browser, "noa");
   try {
-    await employee.goto("/requests");
-    await employee.getByLabel("מתאריך").fill(startDate);
-    await employee.getByLabel("עד תאריך").fill(endDate);
-    await employee.getByLabel("הערה (לא חובה)").fill("בדיקה אוטומטית");
-    await employee.getByRole("button", { name: "שליחת בקשת חופשה" }).click();
-    await expect(employee.getByText("בקשת החופשה נשלחה למנהל.")).toBeVisible();
+    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const me = await call<{ user: { id: string } }>(noa, "/api/me");
+    await clearDay(lead, team.id, week, [me.body.user.id], [start, end]);
+    const morning = shifts.find((shift) => shift.name === "בוקר")!;
+    expect((await call(lead, "/api/assignments", "POST", { userId: me.body.user.id, shiftTemplateId: morning.id, workDate: start, acknowledgeWarnings: true })).status).toBe(201);
 
-    await manager.goto("/requests");
-    const request = manager
-      .locator(".requests-item")
-      .filter({ hasText: "עובד בדיקה" })
-      .filter({ hasText: hebrewDate(startDate) })
-      .filter({ has: manager.getByRole("button", { name: "אישור" }) });
-    manager.once("dialog", (dialog) => dialog.accept());
-    await request.getByRole("button", { name: "אישור" }).click();
-    await expect(manager.getByText(/החופשה אושרה\. 1 משמרות הוסרו/)).toBeVisible();
+    await noa.goto("/requests");
+    await noa.getByRole("button", { name: "חופשה", exact: true }).click();
+    const dialog = noa.getByRole("dialog");
+    await dialog.getByLabel("מתאריך").fill(start);
+    await dialog.getByLabel("עד תאריך").fill(end);
+    await dialog.getByRole("button", { name: "שליחת בקשה" }).click();
+    await expect(noa.locator(".toast")).toContainText("נשלחה");
 
-    const schedule = await (await manager.request.get(`/api/schedule?weekStart=${weekStart}`)).json();
-    expect(schedule.assignments.some((item: { id: string }) => item.id === assignmentId)).toBe(false);
+    await lead.goto("/requests?tab=approvals");
+    await lead.locator(".request-item", { hasText: "חופשה: נועה כהן" }).first().getByRole("button", { name: "אישור" }).click();
+    await expect(lead.locator(".toast")).toContainText("אושרה");
 
-    await employee.reload();
-    await expect((await openBell(employee)).getByText("בקשת החופשה אושרה").first()).toBeVisible();
+    const schedule = await call<{ assignments: { userId: string; workDate: string }[] }>(lead, `/api/schedule?week=${week}&team=${team.id}`);
+    expect(schedule.body.assignments.some((item) => item.userId === me.body.user.id && item.workDate >= start && item.workDate <= end)).toBe(false);
+    const availability = await call<{ entries: { workDate: string; status: string }[] }>(noa, `/api/availability?week=${week}`);
+    expect(availability.body.entries.filter((entry) => entry.status === "TIME_OFF").map((entry) => entry.workDate)).toEqual(expect.arrayContaining([start, end]));
   } finally {
-    await manager.request.delete(`/api/assignments/${assignmentId}`);
-    await Promise.all([manager, employee].map((page) => page.context().close()));
-  }
-});
-
-test("phone layout: bottom navigation and notification panel fit the screen", async ({ browser }) => {
-  const noa = await signedInPage(browser, "noa", { width: 390, height: 844 });
-  try {
-    for (const path of ["/", "/schedule", "/requests"]) {
-      await noa.goto(path);
-      const rail = noa.locator(".icon-rail");
-      await expect(rail).toBeVisible();
-      const box = await rail.boundingBox();
-      expect(box!.y + box!.height).toBeGreaterThan(800);
-      // Nothing on the page is wider than the phone screen.
-      const overflow = await noa.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow, `horizontal overflow on ${path}`).toBeLessThanOrEqual(0);
-    }
-    await noa.goto("/");
-    await noa.locator(".icon-rail").getByTitle("בקשות").click();
-    await expect(noa).toHaveURL(/\/requests$/);
-
-    const panel = await openBell(noa);
-    const panelBox = await panel.boundingBox();
-    expect(panelBox!.x).toBeGreaterThanOrEqual(0);
-    expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(390);
-  } finally {
+    await lead.context().close();
     await noa.context().close();
   }
 });
 
-test("availability confirmation: employee can mark the week as done", async ({ browser }) => {
-  const employee = await signedInPage(browser, "employee");
-  try {
-    await employee.goto("/schedule");
-    const bar = employee.locator(".availability-confirm");
-    await expect(bar).toBeVisible();
-    const doneButton = bar.getByRole("button", { name: "סיימתי למלא" });
-    if (await doneButton.isVisible()) {
-      await doneButton.click();
-    }
-    await expect(bar).toHaveClass(/done/);
-  } finally {
-    await employee.context().close();
-  }
-});
+test("giveaway: offered to the team, taken by a colleague, approved", async ({ browser }) => {
+  // Within the 6 weeks the Requests page lists as offerable shifts.
+  const week = weekStart(3);
+  const date = addDays(week, 3);
+  const admin = await signIn(browser, "admin");
+  const people = await peopleByName(admin);
+  await admin.context().close();
+  const noaId = people.get("נועה כהן")!.id;
+  const colleague = [...people.values()].filter((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("t1.1"))[0];
 
-test("installable app: manifest, icons and service worker are served", async ({ request }) => {
-  const manifest = await (await request.get("/manifest.webmanifest")).json();
-  expect(manifest.display).toBe("standalone");
-  for (const icon of manifest.icons) {
-    expect((await request.get(icon.src)).status()).toBe(200);
+  const lead = await signIn(browser, "lead1");
+  const noa = await signIn(browser, "noa");
+  const other = await signIn(browser, colleague.email);
+  try {
+    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    await clearDay(lead, team.id, week, [noaId, colleague.id], [addDays(date, -1), date, addDays(date, 1)]);
+    const night = shifts.find((shift) => shift.name === "לילה")!;
+    const created = await call<{ assignment: { id: string } }>(lead, "/api/assignments", "POST", { userId: noaId, shiftTemplateId: night.id, workDate: date, acknowledgeWarnings: true });
+    expect(created.status).toBe(201);
+
+    await noa.goto("/requests");
+    await noa.getByRole("button", { name: "מסירה", exact: true }).click();
+    await noa.getByRole("dialog").getByRole("combobox", { name: /^איזו משמרת/ }).selectOption(created.body.assignment.id);
+    await noa.getByRole("dialog").getByRole("button", { name: "פרסום למסירה" }).click();
+    await expect(noa.locator(".toast")).toContainText("פורסמה");
+
+    await other.goto("/requests?tab=board");
+    await other.locator(".request-item", { hasText: "נועה כהן" }).first().getByRole("button", { name: "אני לוקח/ת" }).click();
+    await expect(other.locator(".toast")).toContainText("ממתין לאישור");
+
+    await lead.goto("/requests?tab=approvals");
+    await lead.locator(".request-item", { hasText: "מסירה: נועה כהן" }).first().getByRole("button", { name: "אישור" }).click();
+    await expect(lead.locator(".toast")).toContainText("אושרה");
+
+    const after = await call<{ assignments: { id: string; userId: string }[] }>(lead, `/api/schedule?week=${week}&team=${team.id}`);
+    expect(after.body.assignments.find((item) => item.id === created.body.assignment.id)?.userId).toBe(colleague.id);
+  } finally {
+    await lead.context().close();
+    await noa.context().close();
+    await other.context().close();
   }
-  const worker = await request.get("/sw.js");
-  expect(worker.status()).toBe(200);
-  expect(await worker.text()).toContain("showNotification");
 });

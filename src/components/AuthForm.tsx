@@ -46,6 +46,7 @@ export function AuthForm() {
           <span>connect</span>
         </div>
         <h1>כניסה למערכת</h1>
+        <p className="auth-sub">סידור משמרות לצוותי התמיכה והמכירות</p>
         {/* method="post" so that if scripts fail to load, the browser never puts the password in the URL. */}
         <form method="post" onSubmit={handleSubmit} className="auth-form">
           <label>

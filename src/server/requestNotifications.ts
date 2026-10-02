@@ -1,121 +1,141 @@
-import { addDays, formatHebrewDate } from "@/lib/dates";
-import { SHIFT_DEFINITIONS } from "@/lib/shifts";
-import type { ShiftType } from "@/lib/types";
-import { query } from "./db";
-import { findUserIdForEmployee, listManagerUserIds, notifyUsers } from "./notifications";
-import type { ShiftGiveaway, VacationRequest } from "./requests";
+import { dateRangeLabel, shiftLabel } from "@/lib/labels";
+import type { Giveaway, SwapRequest, Team, VacationRequest } from "@/lib/types";
+import { listUserIdsWithPermission } from "./access";
+import { notifyUsers } from "./notifications";
 
 const REQUESTS_LINK = "/requests";
 
-export function describeShift(weekStart: string, dayIndex: number, shiftType: ShiftType) {
-  return `משמרת ${SHIFT_DEFINITIONS[shiftType].label} ב-${formatHebrewDate(addDays(weekStart, dayIndex))}`;
+function giveawayShift(giveaway: Giveaway) {
+  return shiftLabel(giveaway.workDate, giveaway.shiftName, giveaway.startsAt, giveaway.endsAt);
 }
 
-function describeGiveawayShift(giveaway: ShiftGiveaway) {
-  return describeShift(giveaway.weekStart, giveaway.dayIndex, giveaway.shiftType);
+export async function notifySwapRequested(swap: SwapRequest) {
+  await notifyUsers([swap.targetUserId], {
+    title: "בקשת החלפת משמרת",
+    body: swap.targetShiftLabel
+      ? `${swap.requesterName} מבקש/ת להחליף: ${swap.shiftLabel} שלו/ה תמורת ${swap.targetShiftLabel} שלך.`
+      : `${swap.requesterName} מבקש/ת להעביר אליך: ${swap.shiftLabel}.`,
+    link: REQUESTS_LINK
+  });
 }
 
-function describeDates(request: VacationRequest) {
-  return request.startDate === request.endDate
-    ? formatHebrewDate(request.startDate)
-    : `${formatHebrewDate(request.startDate)}-${formatHebrewDate(request.endDate)}`;
+export async function notifySwapUpdated(swap: SwapRequest, team: Team) {
+  switch (swap.status) {
+    case "PENDING_MANAGER":
+      await notifyUsers([swap.requesterId], {
+        title: "העמית/ה הסכים/ה להחלפה",
+        body: `${swap.targetUserName} הסכים/ה (${swap.shiftLabel}). ממתין לאישור.`,
+        link: REQUESTS_LINK
+      });
+      await notifyUsers(await listUserIdsWithPermission(team, "requests.approve"), {
+        title: "החלפת משמרת ממתינה לאישורך",
+        body: `${swap.requesterName} ו${swap.targetUserName} · ${swap.shiftLabel}`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "DECLINED_BY_EMPLOYEE":
+      await notifyUsers([swap.requesterId], {
+        title: "בקשת ההחלפה נדחתה",
+        body: `${swap.targetUserName} לא הסכים/ה להחליף (${swap.shiftLabel}).`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "APPROVED":
+      await notifyUsers([swap.requesterId, swap.targetUserId], {
+        title: "ההחלפה אושרה",
+        body: swap.targetShiftLabel
+          ? `${swap.shiftLabel} עברה ל${swap.targetUserName}, ו${swap.targetShiftLabel} עברה ל${swap.requesterName}.`
+          : `${swap.shiftLabel} עברה ל${swap.targetUserName}.`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "DECLINED_BY_MANAGER":
+      await notifyUsers([swap.requesterId, swap.targetUserId], {
+        title: "ההחלפה לא אושרה",
+        body: `ההחלפה בין ${swap.requesterName} ל${swap.targetUserName} (${swap.shiftLabel}) לא אושרה.`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "CANCELLED":
+      await notifyUsers([swap.targetUserId], {
+        title: "בקשת ההחלפה בוטלה",
+        body: `${swap.requesterName} ביטל/ה את הבקשה (${swap.shiftLabel}).`,
+        link: REQUESTS_LINK
+      });
+  }
 }
 
-// A new offer goes to every other active employee who can sign in.
-export async function notifyGiveawayOffered(giveaway: ShiftGiveaway) {
-  const rows = await query<{ user_id: string }>(
-    `SELECT user_id FROM employees
-     WHERE is_active AND user_id IS NOT NULL AND id <> $1`,
-    [giveaway.offeredByEmployeeId]
-  );
+export async function notifyGiveawayOffered(giveaway: Giveaway, teamMemberIds: string[]) {
   await notifyUsers(
-    rows.map((row) => row.user_id),
+    teamMemberIds.filter((id) => id !== giveaway.offeredBy),
     {
       title: "משמרת זמינה למסירה",
-      body: `${giveaway.offeredByName} מוסר/ת ${describeGiveawayShift(giveaway)}. רוצה לקחת אותה?`,
+      body: `${giveaway.offeredByName} מוסר/ת: ${giveawayShift(giveaway)}. רוצה לקחת?`,
       link: REQUESTS_LINK
     }
   );
 }
 
-export async function notifyGiveawayTaken(giveaway: ShiftGiveaway) {
-  const shift = describeGiveawayShift(giveaway);
-  await notifyUsers([await findUserIdForEmployee(giveaway.offeredByEmployeeId)], {
-    title: "מישהו רוצה לקחת את המשמרת שלך",
-    body: `${giveaway.takenByName} ביקש/ה לקחת את ${shift}. הבקשה ממתינה לאישור המנהל.`,
-    link: REQUESTS_LINK
-  });
-  await notifyUsers(await listManagerUserIds(), {
-    title: "מסירת משמרת ממתינה לאישורך",
-    body: `${giveaway.takenByName} רוצה לקחת את ${shift} של ${giveaway.offeredByName}.`,
-    link: REQUESTS_LINK
-  });
-}
-
-export async function notifyGiveawayDecided(giveaway: ShiftGiveaway) {
-  const shift = describeGiveawayShift(giveaway);
-  const [offeredByUserId, takenByUserId] = await Promise.all([
-    findUserIdForEmployee(giveaway.offeredByEmployeeId),
-    findUserIdForEmployee(giveaway.takenByEmployeeId)
-  ]);
-
-  if (giveaway.status === "APPROVED") {
-    await notifyUsers([offeredByUserId], {
-      title: "מסירת המשמרת אושרה",
-      body: `המנהל אישר למסור את המשמרת שלך (${shift}) ל${giveaway.takenByName}.`,
-      link: REQUESTS_LINK
-    });
-    await notifyUsers([takenByUserId], {
-      title: "קיבלת את המשמרת",
-      body: `המנהל אישר לך לקחת את ${shift} מ${giveaway.offeredByName}.`,
-      link: REQUESTS_LINK
-    });
-    return;
-  }
-
-  if (giveaway.status === "DECLINED_BY_MANAGER") {
-    await notifyUsers([offeredByUserId, takenByUserId], {
-      title: "המנהל לא אישר את מסירת המשמרת",
-      body: `מסירת ${shift} מ${giveaway.offeredByName} ל${giveaway.takenByName} לא אושרה.`,
-      link: REQUESTS_LINK
-    });
-    return;
-  }
-
-  if (giveaway.status === "CANCELLED" && takenByUserId) {
-    await notifyUsers([takenByUserId], {
-      title: "מסירת המשמרת בוטלה",
-      body: `${giveaway.offeredByName} ביטל/ה את מסירת ${shift}.`,
-      link: REQUESTS_LINK
-    });
+export async function notifyGiveawayUpdated(giveaway: Giveaway, team: Team) {
+  const shift = giveawayShift(giveaway);
+  switch (giveaway.status) {
+    case "PENDING_MANAGER":
+      await notifyUsers([giveaway.offeredBy], {
+        title: "מישהו רוצה לקחת את המשמרת שלך",
+        body: `${giveaway.takenByName} ביקש/ה לקחת: ${shift}. ממתין לאישור.`,
+        link: REQUESTS_LINK
+      });
+      await notifyUsers(await listUserIdsWithPermission(team, "requests.approve"), {
+        title: "מסירת משמרת ממתינה לאישורך",
+        body: `${giveaway.offeredByName} → ${giveaway.takenByName} · ${shift}`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "APPROVED":
+      await notifyUsers([giveaway.offeredBy], {
+        title: "מסירת המשמרת אושרה",
+        body: `${shift} עברה ל${giveaway.takenByName}.`,
+        link: REQUESTS_LINK
+      });
+      await notifyUsers([giveaway.takenBy], {
+        title: "קיבלת משמרת",
+        body: `${shift} (מ${giveaway.offeredByName}) עכשיו שלך.`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "DECLINED_BY_MANAGER":
+      await notifyUsers([giveaway.offeredBy, giveaway.takenBy], {
+        title: "מסירת המשמרת לא אושרה",
+        body: `המסירה של ${shift} לא אושרה.`,
+        link: REQUESTS_LINK
+      });
+      return;
+    case "CANCELLED":
+      await notifyUsers([giveaway.takenBy], {
+        title: "מסירת המשמרת בוטלה",
+        body: `${giveaway.offeredByName} ביטל/ה את המסירה של ${shift}.`,
+        link: REQUESTS_LINK
+      });
   }
 }
 
-export async function notifyVacationRequested(request: VacationRequest) {
-  await notifyUsers(await listManagerUserIds(), {
+export async function notifyVacationRequested(vacation: VacationRequest, team: Team | null) {
+  if (!team) {
+    return;
+  }
+  await notifyUsers(await listUserIdsWithPermission(team, "requests.approve"), {
     title: "בקשת חופשה חדשה",
-    body: `${request.employeeName} מבקש/ת חופשה: ${describeDates(request)}.`,
+    body: `${vacation.userName} · ${dateRangeLabel(vacation.startDate, vacation.endDate)}`,
     link: REQUESTS_LINK
   });
 }
 
-export async function notifyVacationDecided(request: VacationRequest) {
-  const userId = await findUserIdForEmployee(request.employeeId);
-  if (request.status === "APPROVED") {
-    const removed =
-      request.removedShiftCount > 0
-        ? ` ${request.removedShiftCount} משמרות שלך בימים אלה הוסרו מהסידור.`
-        : "";
-    await notifyUsers([userId], {
-      title: "בקשת החופשה אושרה",
-      body: `החופשה שלך (${describeDates(request)}) אושרה.${removed}`,
-      link: REQUESTS_LINK
-    });
-  } else if (request.status === "DECLINED") {
-    await notifyUsers([userId], {
-      title: "בקשת החופשה נדחתה",
-      body: `בקשת החופשה שלך (${describeDates(request)}) לא אושרה.`,
-      link: REQUESTS_LINK
-    });
+export async function notifyVacationDecided(vacation: VacationRequest) {
+  const dates = dateRangeLabel(vacation.startDate, vacation.endDate);
+  if (vacation.status === "APPROVED") {
+    const removed = vacation.removedShiftCount > 0 ? ` ${vacation.removedShiftCount} משמרות בימים אלה הוסרו מהסידור.` : "";
+    await notifyUsers([vacation.userId], { title: "החופשה אושרה", body: `החופשה ${dates} אושרה.${removed}`, link: REQUESTS_LINK });
+  } else if (vacation.status === "DECLINED") {
+    await notifyUsers([vacation.userId], { title: "החופשה לא אושרה", body: `בקשת החופשה ${dates} לא אושרה.`, link: REQUESTS_LINK });
   }
 }

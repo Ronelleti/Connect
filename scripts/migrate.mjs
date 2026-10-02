@@ -2,6 +2,13 @@ import { readFile } from "node:fs/promises";
 import process from "node:process";
 import pg from "pg";
 
+// Use the local .env when there is one (values already in the environment win).
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // No .env file: rely on the environment.
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {

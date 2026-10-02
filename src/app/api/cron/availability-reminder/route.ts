@@ -9,7 +9,7 @@ import {
 } from "@/lib/dates";
 import { jsonError } from "@/server/api";
 import { notifyUsers } from "@/server/notifications";
-import { listUserIdsMissingAvailability } from "@/server/requests";
+import { listUserIdsMissingAvailability } from "@/server/schedule";
 
 // Availability for the week two weeks ahead is due on Tuesday of the current week.
 const DEADLINE_DAY_INDEX = 2;
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     body: `עוד לא מילאת אילוצים לשבוע ${formatHebrewDate(weekStart)}-${formatHebrewDate(
       addDays(weekStart, 6)
     )}.${deadlineText}`,
-    link: "/schedule#availability-section"
+    link: "/availability"
   });
 
   return NextResponse.json({ weekStart, reminded: userIds.length });

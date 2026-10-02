@@ -1,14 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readSessionToken, signSession } from "./session";
-import type { User } from "@/lib/types";
-
 const originalAuthSecret = process.env.AUTH_SECRET;
-const user: User = {
-  id: "user-1",
-  email: "employee@example.com",
-  name: "עובד בדיקה",
-  role: "EMPLOYEE"
-};
+const user = { id: "user-1" };
 
 beforeAll(() => {
   process.env.AUTH_SECRET = "test-secret-that-is-long-and-not-used-in-production";
@@ -27,7 +20,7 @@ describe("encrypted sessions", () => {
     const token = signSession(user);
 
     expect(token.split(".")).toHaveLength(4);
-    expect(token).not.toContain(user.email);
+    expect(token).not.toContain(user.id);
     expect(readSessionToken(token)).toEqual(user);
   });
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import { hasFilesAccess } from "@/server/filesAccess";
-import { deleteSharedFile, findSharedFileMeta } from "@/server/repositories";
+import { deleteSharedFile, findSharedFileMeta } from "@/server/files";
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
@@ -18,7 +18,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     return jsonError("הקובץ לא נמצא.", 404);
   }
 
-  if (file.uploadedByUserId !== user.id && user.role !== "MANAGER") {
+  if (file.uploadedByUserId !== user.id && user.role !== "ADMIN" && user.role !== "DEPARTMENT_MANAGER") {
     return jsonError("אין לך הרשאה למחוק קובץ זה.", 403);
   }
 

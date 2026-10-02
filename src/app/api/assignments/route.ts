@@ -1,104 +1,57 @@
 import { NextResponse } from "next/server";
-import { validateAssignment } from "@/lib/shifts";
-import type { ShiftType } from "@/lib/types";
-import { isApiError, jsonError, requireApiUser } from "@/server/api";
-import {
-  listAssignmentsAroundWeek,
-  listAvailabilityBlocks,
-  listEmployees,
-  replaceAssignment
-} from "@/server/repositories";
+import { addDays, getSundayWeekStart } from "@/lib/dates";
+import { can } from "@/lib/permissions";
+import { validateAssignment } from "@/lib/scheduling";
+import { asActor } from "@/server/access";
+import { forbidden, isApiError, isDateOnly, isUuid, jsonError, readJson, requireApiUser } from "@/server/api";
+import { findShiftTemplate, findTeam } from "@/server/org";
+import { findPerson } from "@/server/people";
+import { createAssignments, listAvailability, listUserAssignments } from "@/server/schedule";
 
+// Puts a team member on a shift. Errors (overlap, too little rest, ...) block it; warnings
+// (time off, over the weekly hours, ...) are returned with 409 until the scheduler confirms
+// with acknowledgeWarnings.
 export async function POST(request: Request) {
-  const user = await requireApiUser(["MANAGER"]);
+  const user = await requireApiUser();
   if (isApiError(user)) {
     return user;
   }
-
-  const body = await request.json();
-  const employeeId = String(body.employeeId ?? "");
-  const weekStart = String(body.weekStart ?? "");
-  const dayIndex = Number(body.dayIndex);
-  const shiftType = String(body.shiftType ?? "") as ShiftType;
-  const replaceAssignmentId = body.replaceAssignmentId
-    ? String(body.replaceAssignmentId)
-    : null;
-  const employees = await listEmployees();
-  const employee = employees.find((item) => item.id === employeeId);
-
-  if (
-    !employee ||
-    !weekStart ||
-    !Number.isInteger(dayIndex) ||
-    dayIndex < 0 ||
-    dayIndex > 6 ||
-    !["MORNING", "EVENING", "NIGHT"].includes(shiftType)
-  ) {
-    return jsonError("A valid employee, week, day, and shift are required.");
+  const body = await readJson(request);
+  if (!isUuid(body.userId) || !isUuid(body.shiftTemplateId) || !isDateOnly(body.workDate)) {
+    return jsonError("חסרים פרטי שיבוץ.");
+  }
+  const [template, person] = await Promise.all([findShiftTemplate(body.shiftTemplateId), findPerson(body.userId)]);
+  const team = template ? await findTeam(template.teamId) : null;
+  if (!template || !team || !person) {
+    return jsonError("המשמרת או העובד/ת לא נמצאו.", 404);
+  }
+  if (!can(asActor(user), "schedule.edit", team)) {
+    return forbidden();
+  }
+  if (person.teamId !== team.id) {
+    return jsonError(`${person.name} לא שייך/ת לצוות ${team.name}.`);
   }
 
-  const [nearbyAssignments, availabilityBlocks] = await Promise.all([
-    listAssignmentsAroundWeek(weekStart),
-    listAvailabilityBlocks(weekStart)
+  const workDate = body.workDate;
+  const weekStart = getSundayWeekStart(new Date(`${workDate}T12:00:00.000Z`));
+  const [userAssignments, availability] = await Promise.all([
+    listUserAssignments([person.id], addDays(weekStart, -1), addDays(weekStart, 8)),
+    listAvailability([person.id], workDate, addDays(workDate, 1))
   ]);
-  const existingAssignments = nearbyAssignments.filter(
-    (assignment) => assignment.weekStart === weekStart.slice(0, 10)
-  );
-  const occupiedAssignment = existingAssignments.find(
-    (assignment) =>
-      assignment.dayIndex === dayIndex && assignment.shiftType === shiftType
-  );
-
-  if ((occupiedAssignment?.id ?? null) !== replaceAssignmentId) {
-    return jsonError("Shift is already occupied or was changed.", 409, {
-      errors: [{
-        code: "SHIFT_OCCUPIED",
-        message: occupiedAssignment
-          ? "המשמרת כבר מאוישת. יש לאשר החלפת עובד."
-          : "השיבוץ השתנה בינתיים. יש לרענן ולנסות שוב."
-      }],
-      warnings: []
-    });
-  }
-
-  const assignmentsForValidation = occupiedAssignment
-    ? nearbyAssignments.filter((assignment) => assignment.id !== occupiedAssignment.id)
-    : nearbyAssignments;
-  const validation = validateAssignment(
-    { employeeId, weekStart, dayIndex, shiftType },
-    employee,
-    assignmentsForValidation,
-    availabilityBlocks
-  );
-
+  const validation = validateAssignment({ userId: person.id, template, workDate }, person, userAssignments, availability, weekStart);
   if (validation.errors.length > 0) {
-    return jsonError("Assignment violates scheduling rules.", 409, validation);
+    return jsonError(validation.errors[0].message, 422, validation);
   }
-
   if (validation.warnings.length > 0 && body.acknowledgeWarnings !== true) {
-    return jsonError("Assignment requires warning confirmation.", 409, validation);
+    return jsonError("נדרש אישור לשיבוץ.", 409, validation);
   }
 
-  const assignment = await replaceAssignment(
-    {
-      employeeId,
-      weekStart,
-      dayIndex,
-      shiftType,
-      notes: String(body.notes ?? "")
-    },
-    replaceAssignmentId
+  const [assignment] = await createAssignments(
+    [{ userId: person.id, shiftTemplateId: template.id, teamId: team.id, workDate, startsAt: template.startsAt, endsAt: template.endsAt }],
+    user.id
   );
-
   if (!assignment) {
-    return jsonError("Shift changed while it was being assigned.", 409, {
-      errors: [{
-        code: "SHIFT_CHANGED",
-        message: "השיבוץ השתנה בינתיים. יש לרענן ולנסות שוב."
-      }],
-      warnings: []
-    });
+    return jsonError(`${person.name} כבר משובץ/ת למשמרת הזו.`, 409);
   }
-
-  return NextResponse.json({ assignment, validation }, { status: 201 });
+  return NextResponse.json({ assignment, warnings: validation.warnings }, { status: 201 });
 }

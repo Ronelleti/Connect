@@ -1,61 +1,51 @@
 import { NextResponse } from "next/server";
-import { isApiError, jsonError, requireApiUser } from "@/server/api";
-import { listEmployees } from "@/server/repositories";
+import { can } from "@/lib/permissions";
+import { asActor } from "@/server/access";
+import { forbidden, isApiError, jsonError, readJson, requireApiUser } from "@/server/api";
+import { findTeam } from "@/server/org";
 import { notifyVacationDecided } from "@/server/requestNotifications";
-import {
-  approveVacationRequest,
-  closeVacationRequest,
-  findVacationRequest,
-  isUuid
-} from "@/server/requests";
+import { approveVacation, closeVacation, findVacation, RequestConflictError } from "@/server/requests";
 
+// approve / decline (an approver for the person's team), cancel (the person).
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await requireApiUser();
   if (isApiError(user)) {
     return user;
   }
-
-  const { id } = await context.params;
-  const body = await request.json().catch(() => ({}));
-  const action = String(body.action ?? "");
-  const vacation = isUuid(id) ? await findVacationRequest(id) : null;
+  const vacation = await findVacation((await context.params).id);
   if (!vacation) {
-    return jsonError("Vacation request not found.", 404);
+    return jsonError("הבקשה לא נמצאה.", 404);
   }
+  const { action } = await readJson(request);
 
   if (action === "cancel") {
-    const employees = await listEmployees();
-    const employee = employees.find((item) => item.userId === user.id);
-    if (!employee || employee.id !== vacation.employeeId) {
-      return jsonError("אפשר לבטל רק בקשה שלך.", 403);
+    if (vacation.userId !== user.id) {
+      return forbidden();
     }
-    const cancelled = await closeVacationRequest(id, "CANCELLED");
-    if (!cancelled) {
-      return jsonError("הבקשה כבר טופלה.", 409);
-    }
-    return NextResponse.json({ request: cancelled });
+    const updated = await closeVacation(vacation.id, "CANCELLED", user.id);
+    return updated ? NextResponse.json({ vacation: updated }) : jsonError("הבקשה כבר טופלה.", 409);
   }
-
   if (action !== "approve" && action !== "decline") {
-    return jsonError("Unknown vacation action.");
+    return jsonError("פעולה לא מוכרת.");
   }
-  if (user.role !== "MANAGER") {
-    return jsonError("Only a manager can decide on a vacation request.", 403);
+  const team = vacation.teamId ? await findTeam(vacation.teamId) : null;
+  const allowed = user.role === "ADMIN" || (team !== null && can(asActor(user), "requests.approve", team) && vacation.userId !== user.id);
+  if (!allowed) {
+    return forbidden("אין לך הרשאה לאשר את הבקשה הזו.");
   }
 
-  if (action === "decline") {
-    const declined = await closeVacationRequest(id, "DECLINED");
-    if (!declined) {
-      return jsonError("הבקשה כבר טופלה.", 409);
+  let updated;
+  try {
+    updated = action === "approve" ? await approveVacation(vacation, user.id) : await closeVacation(vacation.id, "DECLINED", user.id);
+  } catch (error) {
+    if (error instanceof RequestConflictError) {
+      return jsonError(error.message, 409);
     }
-    await notifyVacationDecided(declined);
-    return NextResponse.json({ request: declined, removedShifts: [] });
+    throw error;
   }
-
-  const result = await approveVacationRequest(id);
-  if (!result) {
+  if (!updated) {
     return jsonError("הבקשה כבר טופלה.", 409);
   }
-  await notifyVacationDecided(result.request);
-  return NextResponse.json({ request: result.request, removedShifts: result.removedShifts });
+  await notifyVacationDecided(updated);
+  return NextResponse.json({ vacation: updated });
 }

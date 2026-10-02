@@ -1,85 +1,27 @@
 import { NextResponse } from "next/server";
 import { getScheduleTimeParts } from "@/lib/dates";
-import { getShiftStartInstant } from "@/lib/shifts";
-import { isApiError, jsonError, requireApiUser } from "@/server/api";
-import { findAssignment, listEmployees, listUpcomingAssignments } from "@/server/repositories";
+import { isApiError, isUuid, jsonError, readJson, requireApiUser } from "@/server/api";
+import { listPeople } from "@/server/people";
 import { notifyGiveawayOffered } from "@/server/requestNotifications";
-import {
-  createGiveaway,
-  isUuid,
-  listActiveGiveawayAssignmentIds,
-  listGiveaways
-} from "@/server/requests";
+import { createGiveaway } from "@/server/requests";
+import { findAssignment } from "@/server/schedule";
 
-export async function GET() {
-  const user = await requireApiUser();
-  if (isApiError(user)) {
-    return user;
-  }
-
-  const employees = await listEmployees();
-  const employee = employees.find((item) => item.userId === user.id) ?? null;
-  const now = new Date();
-  const [giveaways, activeAssignmentIds, upcoming] = await Promise.all([
-    listGiveaways(),
-    listActiveGiveawayAssignmentIds(),
-    employee
-      ? listUpcomingAssignments(employee.id, getScheduleTimeParts(now).dateOnly, 40)
-      : Promise.resolve([])
-  ]);
-
-  // Everyone sees the open board; finished giveaways only show to the people involved
-  // (managers see all of them).
-  // An offer that was never completed before its shift started is no longer actionable,
-  // so it drops off the board.
-  const isActive = (giveaway: (typeof giveaways)[number]) =>
-    (giveaway.status === "OPEN" || giveaway.status === "PENDING_MANAGER") &&
-    getShiftStartInstant(giveaway.weekStart, giveaway.dayIndex, giveaway.shiftType) > now;
-  const visible = giveaways.filter(
-    (giveaway) =>
-      isActive(giveaway) ||
-      (giveaway.status !== "OPEN" &&
-        giveaway.status !== "PENDING_MANAGER" &&
-        (user.role === "MANAGER" ||
-          giveaway.offeredByEmployeeId === employee?.id ||
-          giveaway.takenByEmployeeId === employee?.id))
-  );
-  const offerableShifts = upcoming.filter(
-    (assignment) =>
-      !activeAssignmentIds.includes(assignment.id) &&
-      getShiftStartInstant(assignment.weekStart, assignment.dayIndex, assignment.shiftType) > now
-  );
-
-  return NextResponse.json({
-    employeeId: employee?.id ?? null,
-    giveaways: visible,
-    offerableShifts
-  });
-}
-
+// Offers one of my future shifts to my team.
 export async function POST(request: Request) {
   const user = await requireApiUser();
   if (isApiError(user)) {
     return user;
   }
-
-  const body = await request.json().catch(() => ({}));
-  const assignmentId = String(body.assignmentId ?? "");
+  const { assignmentId } = await readJson(request);
   const assignment = isUuid(assignmentId) ? await findAssignment(assignmentId) : null;
-  const employees = await listEmployees();
-  const employee = employees.find((item) => item.userId === user.id);
-
-  if (!assignment || !employee || assignment.employeeId !== employee.id) {
-    return jsonError("אפשר למסור רק משמרת שלך.", 403);
+  if (!assignment || assignment.userId !== user.id || assignment.workDate < getScheduleTimeParts().dateOnly) {
+    return jsonError("אפשר למסור רק משמרת עתידית שלך.");
   }
-  if (getShiftStartInstant(assignment.weekStart, assignment.dayIndex, assignment.shiftType) <= new Date()) {
-    return jsonError("אי אפשר למסור משמרת שכבר התחילה.");
-  }
-
-  const giveaway = await createGiveaway(assignment.id, employee.id);
+  const giveaway = await createGiveaway(assignment.id, user.id, assignment.teamId);
   if (!giveaway) {
-    return jsonError("המשמרת הזו כבר מוצעת למסירה.", 409);
+    return jsonError("המשמרת כבר מוצעת למסירה.", 409);
   }
-  await notifyGiveawayOffered(giveaway);
+  const members = await listPeople({ teamIds: [assignment.teamId] });
+  await notifyGiveawayOffered(giveaway, members.map((member) => member.id));
   return NextResponse.json({ giveaway }, { status: 201 });
 }

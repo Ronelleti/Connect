@@ -4,11 +4,11 @@ import { jsonError } from "@/server/api";
 import { verifyPassword } from "@/server/password";
 import {
   clearLoginFailures,
-  findUserByEmail,
+  findLoginByEmail,
   isLoginRateLimited,
   recordLoginFailure,
   toUser
-} from "@/server/repositories";
+} from "@/server/people";
 import { setSessionCookie } from "@/server/session";
 
 export async function POST(request: Request) {
@@ -26,19 +26,18 @@ export async function POST(request: Request) {
     .digest("hex");
 
   if (await isLoginRateLimited(attemptKey)) {
-    const response = jsonError("Too many login attempts. Try again in 15 minutes.", 429);
+    const response = jsonError("יותר מדי ניסיונות כניסה. נסו שוב בעוד 15 דקות.", 429);
     response.headers.set("Retry-After", "900");
     return response;
   }
-  const userRow = await findUserByEmail(email);
+  const login = await findLoginByEmail(email);
 
-  if (!userRow || !(await verifyPassword(password, userRow.password_hash))) {
+  if (!login || !login.person.isActive || !(await verifyPassword(password, login.passwordHash))) {
     await recordLoginFailure(attemptKey);
-    return jsonError("Invalid email or password.", 401);
+    return jsonError("אימייל או סיסמה שגויים.", 401);
   }
 
   await clearLoginFailures(attemptKey);
-  const user = toUser(userRow);
-  await setSessionCookie(user);
-  return NextResponse.json({ user });
+  await setSessionCookie({ id: login.person.id });
+  return NextResponse.json({ user: toUser(login.person) });
 }

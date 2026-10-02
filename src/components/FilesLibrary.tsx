@@ -10,10 +10,11 @@ import {
   Upload
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppShell } from "./AppShell";
-import type { SharedFile, User } from "@/lib/types";
+import { AppShell, type ShellProps } from "./shell/AppShell";
+import type { SharedFile } from "@/lib/types";
 
-export function FilesLibrary({ currentUser }: { currentUser: User }) {
+export function FilesLibrary(shell: ShellProps) {
+  const currentUser = shell.user;
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -106,13 +107,7 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
   }
 
   return (
-    <AppShell currentUser={currentUser} active="files">
-      <section className="schedule-toolbar">
-        <div>
-          <p className="eyebrow">Wecomconnect</p>
-          <h1>קבצים משותפים</h1>
-        </div>
-      </section>
+    <AppShell {...shell} title="קבצים משותפים" subtitle="נהלים, מדריכים ומסמכים לכל הצוותים">
 
       {isLoading ? (
         <p className="empty-state">טוען...</p>
@@ -167,7 +162,7 @@ export function FilesLibrary({ currentUser }: { currentUser: User }) {
                       <a className="icon-button" href={`/api/files/${file.id}/download`} title="הורדה">
                         <Download size={16} />
                       </a>
-                      {file.uploadedByUserId === currentUser.id || currentUser.role === "MANAGER" ? (
+                      {file.uploadedByUserId === currentUser.id || (currentUser.role === "ADMIN" || currentUser.role === "DEPARTMENT_MANAGER") ? (
                         <button
                           className="icon-button"
                           title="מחיקה"

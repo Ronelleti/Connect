@@ -1,41 +1,18 @@
 import { NextResponse } from "next/server";
-import { getAvailabilityWeekStart } from "@/lib/dates";
-import { isApiError, jsonError, requireApiUser } from "@/server/api";
-import { listEmployees } from "@/server/repositories";
-import { findAvailabilitySubmission, markAvailabilitySubmitted } from "@/server/requests";
+import { isSundayDateOnly } from "@/lib/dates";
+import { isApiError, jsonError, readJson, requireApiUser } from "@/server/api";
+import { markAvailabilitySubmitted } from "@/server/schedule";
 
-// Whether the signed-in employee has confirmed their availability for the week that is
-// currently open for availability (two weeks ahead).
-export async function GET() {
+// "I'm done": marks the week as filled in even if nothing needed changing.
+export async function POST(request: Request) {
   const user = await requireApiUser();
   if (isApiError(user)) {
     return user;
   }
-  const employee = (await listEmployees()).find((item) => item.userId === user.id);
-  const weekStart = getAvailabilityWeekStart();
-  if (!employee) {
-    return NextResponse.json({ isEmployee: false, weekStart, submittedAt: null });
+  const { weekStart } = await readJson(request);
+  if (typeof weekStart !== "string" || !isSundayDateOnly(weekStart)) {
+    return jsonError("שבוע לא תקין.");
   }
-  return NextResponse.json({
-    isEmployee: true,
-    weekStart,
-    submittedAt: await findAvailabilitySubmission(employee.id, weekStart)
-  });
-}
-
-export async function POST() {
-  const user = await requireApiUser();
-  if (isApiError(user)) {
-    return user;
-  }
-  const employee = (await listEmployees()).find((item) => item.userId === user.id);
-  if (!employee) {
-    return jsonError("אין רשומת עובד המקושרת לחשבון זה.", 404);
-  }
-  const weekStart = getAvailabilityWeekStart();
-  await markAvailabilitySubmitted(employee.id, weekStart);
-  return NextResponse.json({
-    weekStart,
-    submittedAt: await findAvailabilitySubmission(employee.id, weekStart)
-  });
+  await markAvailabilitySubmitted(user.id, weekStart);
+  return NextResponse.json({ ok: true });
 }

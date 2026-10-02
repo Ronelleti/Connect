@@ -3,9 +3,9 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Wecom Connect",
+    name: "Wecom Support & Sales",
     short_name: "Wecom",
-    description: "סידור משמרות, החלפות, בקשות חופשה והתראות",
+    description: "סידור משמרות לצוותי התמיכה והמכירות: החלפות, חופשות, תובנות והתראות",
     start_url: "/",
     scope: "/",
     display: "standalone",

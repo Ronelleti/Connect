@@ -1,45 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildScheduleCsv, scheduleExportFilename } from "./scheduleExport";
-import type { Employee, EmployeeSummary, ShiftAssignment } from "./types";
+import { buildScheduleCsv } from "./scheduleExport";
 
-const employee: Employee = {
-  id: "employee-1",
-  userId: "user-1",
-  name: "נועה כהן",
-  email: "noa@example.com",
-  roleTitle: "עובדת משמרת",
-  weeklyMinShifts: 1,
-  weeklyMaxShifts: 6,
-  isActive: true
-};
-
-describe("schedule CSV export", () => {
-  it("includes Hebrew day, date, shift and weekly totals", () => {
-    const assignments: ShiftAssignment[] = [{
-      id: "assignment-1",
-      employeeId: employee.id,
-      weekStart: "2026-07-19",
-      dayIndex: 6,
-      shiftType: "NIGHT",
-      notes: ""
-    }];
-    const summaries: EmployeeSummary[] = [{
-      employeeId: employee.id,
-      shiftCount: 1,
-      workHours: 8,
-      minShifts: 1,
-      maxShifts: 6
-    }];
-
-    const csv = buildScheduleCsv({
-      weekStart: "2026-07-19",
-      employees: [employee],
-      assignments,
-      summaries
-    });
-
-    expect(csv).toContain('"נועה כהן","עובדת משמרת","שבת","25.07","לילה"');
-    expect(csv).toContain('"23:00-07:00","1","8"');
-    expect(scheduleExportFilename("2026-07-19")).toBe("wecomconnect-schedule-2026-07-19.csv");
+describe("buildScheduleCsv", () => {
+  it("writes one sorted row per assignment with a BOM for Excel", () => {
+    const csv = buildScheduleCsv(
+      [
+        { id: "2", userId: "b", shiftTemplateId: "m", teamId: "t", workDate: "2026-10-05", startsAt: "08:00", endsAt: "16:00" },
+        { id: "1", userId: "a", shiftTemplateId: "m", teamId: "t", workDate: "2026-10-04", startsAt: "08:00", endsAt: "16:00" }
+      ],
+      [{ id: "m", teamId: "t", name: "בוקר, מוקדם", startsAt: "08:00", endsAt: "16:00", requiredCount: 1, weekdays: 127, sortOrder: 0, isActive: true }],
+      new Map([["a", "אבי"], ["b", "בת"]])
+    );
+    const lines = csv.slice(1).split("\r\n");
+    expect(csv.startsWith("﻿")).toBe(true);
+    expect(lines[1]).toBe('אבי,ראשון,04.10,"בוקר, מוקדם",08:00,16:00,8');
+    expect(lines[2].startsWith("בת,שני")).toBe(true);
   });
 });

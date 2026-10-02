@@ -1,49 +1,46 @@
-import { addDays, formatHebrewDate, getScheduleDays } from "./dates";
-import { SHIFT_DEFINITIONS } from "./shifts";
-import type { ShiftType } from "./types";
+import { addDays, diffDays, formatHebrewDate, getScheduleDays } from "./dates";
+import { timeRangeLabel } from "./shiftTime";
 
-interface WeekShift {
-  dayIndex: number;
-  shiftType: ShiftType;
+interface PublishedShift {
+  workDate: string;
+  shiftName: string;
+  startsAt: string;
+  endsAt: string;
 }
 
-const SHIFT_ORDER: ShiftType[] = ["MORNING", "EVENING", "NIGHT"];
-
-export function schedulePublishLink(weekStart: string) {
-  return `/schedule?week=${weekStart}`;
+export function schedulePublishLink(weekStart: string, teamId: string) {
+  return `/schedule?week=${weekStart}&team=${teamId}`;
 }
 
-// The notification each employee gets when a manager publishes (or re-publishes) a week:
-// their own shifts for that week, in order.
-export function buildSchedulePublishedMessage(weekStart: string, shifts: WeekShift[], isUpdate: boolean) {
+// The notification each team member gets when their team's week is published (or
+// re-published): their own shifts that week, in order.
+export function buildSchedulePublishedMessage(
+  weekStart: string,
+  teamId: string,
+  teamName: string,
+  shifts: PublishedShift[],
+  isUpdate: boolean
+) {
   const days = getScheduleDays(weekStart);
   const range = `${formatHebrewDate(weekStart)}-${formatHebrewDate(addDays(weekStart, 6))}`;
-  const sorted = [...shifts].sort(
-    (left, right) =>
-      left.dayIndex - right.dayIndex ||
-      SHIFT_ORDER.indexOf(left.shiftType) - SHIFT_ORDER.indexOf(right.shiftType)
-  );
-  const list = sorted
-    .map(
-      (shift) =>
-        `${days[shift.dayIndex].label} ${formatHebrewDate(days[shift.dayIndex].date)} ${
-          SHIFT_DEFINITIONS[shift.shiftType].label
-        }`
-    )
+  const list = [...shifts]
+    .sort((left, right) => left.workDate.localeCompare(right.workDate) || left.startsAt.localeCompare(right.startsAt))
+    .map((shift) => {
+      const day = days[diffDays(weekStart, shift.workDate)];
+      return `${day.label} ${formatHebrewDate(shift.workDate)} ${shift.shiftName} ${timeRangeLabel(shift.startsAt, shift.endsAt)}`;
+    })
     .join(", ");
 
-  let body: string;
-  if (sorted.length === 0) {
-    body = "אין לך משמרות בשבוע זה.";
-  } else if (sorted.length === 1) {
-    body = `יש לך משמרת אחת: ${list}.`;
-  } else {
-    body = `יש לך ${sorted.length} משמרות: ${list}.`;
-  }
+  const body =
+    shifts.length === 0
+      ? "אין לך משמרות בשבוע זה."
+      : shifts.length === 1
+        ? `יש לך משמרת אחת: ${list}.`
+        : `יש לך ${shifts.length} משמרות: ${list}.`;
 
   return {
-    title: isUpdate ? `הסידור לשבוע ${range} עודכן` : `הסידור לשבוע ${range} מוכן`,
+    title: isUpdate ? `הסידור של ${teamName} לשבוע ${range} עודכן` : `הסידור של ${teamName} לשבוע ${range} מוכן`,
     body,
-    link: schedulePublishLink(weekStart)
+    link: schedulePublishLink(weekStart, teamId)
   };
 }

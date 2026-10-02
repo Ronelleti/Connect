@@ -1,23 +1,25 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
-import type { Role, User } from "@/lib/types";
 import { getEncryptionKey } from "./secretKey";
 
 const COOKIE_NAME = "wecomconnect_session";
-const SESSION_VERSION = "v1";
+const SESSION_VERSION = "v2";
 const MAX_AGE_SECONDS = 60 * 60 * 8;
 
+// The cookie only identifies the person; their role, team and permissions are read from
+// the database on every request, so changes apply immediately.
 interface SessionPayload {
   id: string;
-  email: string;
-  name: string;
-  role: Role;
   expiresAt: number;
 }
 
-export function signSession(user: User): string {
+export interface SessionIdentity {
+  id: string;
+}
+
+export function signSession(user: SessionIdentity): string {
   const payload: SessionPayload = {
-    ...user,
+    id: user.id,
     expiresAt: Date.now() + MAX_AGE_SECONDS * 1000
   };
   const initializationVector = randomBytes(12);
@@ -35,7 +37,7 @@ export function signSession(user: User): string {
   ].join(".");
 }
 
-export function readSessionToken(token: string | undefined): User | null {
+export function readSessionToken(token: string | undefined): SessionIdentity | null {
   if (!token) {
     return null;
   }
@@ -61,33 +63,21 @@ export function readSessionToken(token: string | undefined): User | null {
       decipher.final()
     ]).toString("utf8");
     const payload = JSON.parse(decrypted) as SessionPayload;
-    if (
-      !payload.id ||
-      !payload.email ||
-      !payload.name ||
-      !["MANAGER", "EMPLOYEE"].includes(payload.role) ||
-      !Number.isFinite(payload.expiresAt) ||
-      payload.expiresAt < Date.now()
-    ) {
+    if (typeof payload.id !== "string" || !payload.id || !Number.isFinite(payload.expiresAt) || payload.expiresAt < Date.now()) {
       return null;
     }
 
-    return {
-      id: payload.id,
-      email: payload.email,
-      name: payload.name,
-      role: payload.role
-    };
+    return { id: payload.id };
   } catch {
     return null;
   }
 }
 
-export async function getCurrentUser(): Promise<User | null> {
+export async function getSessionIdentity(): Promise<SessionIdentity | null> {
   return readSessionToken((await cookies()).get(COOKIE_NAME)?.value);
 }
 
-export async function setSessionCookie(user: User) {
+export async function setSessionCookie(user: SessionIdentity) {
   (await cookies()).set(COOKIE_NAME, signSession(user), {
     httpOnly: true,
     sameSite: "lax",

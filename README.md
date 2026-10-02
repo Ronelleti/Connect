@@ -1,22 +1,73 @@
-# Wecomconnect
+# Wecom Connect · Support & Sales
 
-Wecomconnect is a shift-management SaaS prototype for teams that work three daily shifts:
+Shift scheduling for the support and sales departments: many people, split into teams,
+where each team defines its own shifts and how many people each one needs. Built from the
+NOC app (`WecomV3`) with a new scheduling core, roles with per-person permissions, and a
+more visual interface (Hebrew, right-to-left, light/dark, installable on phones).
 
-- Morning: 07:00-15:00
-- Evening: 15:00-23:00
-- Night: 23:00-07:00
+## What it does
 
-The app focuses on a comfortable weekly scheduling workflow, employee availability, conflict warnings, exports, and manager-approved shift swaps.
+- **Teams and shifts.** Departments contain teams. Each team has its own shift types (e.g.
+  09:00-18:00, 12:00-21:00, overnight 23:00-07:00) with the number of people needed and the
+  days they run. Shifts are archived, not deleted, so past schedules keep their hours.
+- **Planner** (`/schedule`). A team's week by shift (who works each shift, with
+  staffed/needed badges) or by person (each person's week and hours against their weekly
+  limit). Clicking a shift opens a picker that ranks the team: people who prefer the shift,
+  then available people, then those that need confirmation (day off, unavailable, over
+  their weekly hours) and those who can't be scheduled (overlap, less than 8 hours of rest).
+  **Auto-fill** fills open positions; **publish** notifies every team member (bell + phone)
+  with their own shifts; **export** downloads a CSV for Excel. On phones the planner shows
+  one day at a time.
+- **Availability** (`/availability`). Each person marks shifts they prefer or can't do, or a
+  whole day off, for the week that's open (two weeks ahead), then presses "סיימתי". A
+  Netlify scheduled function reminds those who haven't, every Sunday.
+- **Requests** (`/requests`). Swaps with a teammate (optionally exchanging shifts), a
+  giveaway board for the team, and vacation requests. Swaps and giveaways need the
+  colleague's agreement and then an approver; approving re-checks rest and overlap rules.
+  An approved vacation marks the days off and removes those shifts. Every step notifies the
+  people involved.
+- **Insights** (`/insights`). For one team or all teams in scope: coverage %, open slots,
+  hours, people on time off and pending approvals, with a 6-week coverage trend; coverage by
+  team and by day; a heatmap of how many people work in each hour of the week; and hours
+  per person against their weekly maximum. Every chart has a table view.
+- **People** (`/people`) and **Teams & shifts** (`/settings`). Directory with team filters;
+  managers add and edit people; admins switch per-person permissions on or off.
+- **Home** (`/`). Next shift, this week, hours against the weekly limit, who in the team is
+  on shift right now, and what's waiting for you.
+- **Files**, **notifications** (bell + Web Push) and **install as an app** work as in the NOC app.
 
-## Stack
+## Roles and permissions
 
-- Next.js + React + TypeScript
-- Node route handlers
-- PostgreSQL
-- Vitest
-- Playwright
+Everyone has a role; a role comes with default permissions. An admin can switch on extra
+permissions for one person. A permission only applies inside the person's scope.
 
-## Local Setup
+| Role | Scope | Default permissions |
+| --- | --- | --- |
+| Admin (מנהל מערכת) | Everything | All, plus departments, teams and per-person permissions |
+| Department manager (מנהל מחלקה) | Their department's teams | All seven below |
+| Team lead (ראש צוות) | Their team | Edit schedule, publish, approve requests, view insights |
+| Employee (עובד/ת) | Their team | None (own schedule, availability, requests) |
+
+Permissions: `schedule.edit`, `schedule.publish`, `requests.approve`, `reports.view`,
+`shifts.configure`, `people.manage`, `department.view` (see the whole department's
+schedules). Nobody can create or edit someone at or above their own role (admins aside),
+and the last active admin can't be demoted or deactivated. The rules live in
+`src/lib/permissions.ts` and are checked on the server for every request.
+
+## Scheduling rules
+
+- Overlapping shifts and less than 8 hours of rest between shifts are never allowed.
+- Scheduling someone on a day off, a shift they marked as unavailable, or past their weekly
+  maximum hours needs the scheduler's confirmation.
+- A shift that doesn't run on that weekday can't be scheduled.
+- Auto-fill only fills empty positions, never puts someone on two shifts in one day, keeps
+  8 hours of rest and weekly maximums, skips days off and "can't", and picks people who
+  prefer the shift first, then whoever is furthest below their weekly minimum, then whoever
+  has the fewest hours.
+- Coverage counts each shift up to its target, so overstaffing one shift doesn't hide a gap
+  in another.
+
+## Local setup
 
 ```bash
 cp .env.example .env
@@ -24,92 +75,72 @@ docker compose up -d postgres
 npm install
 npm run db:migrate
 npm run db:seed
-npm run dev
+npm run build && npm start      # or: npm run dev
 ```
 
-## Docker Setup
+The database scripts read `.env` themselves. `npm run db:seed` loads a demo (2 departments,
+4 teams, ~75 people, six weeks of schedules, availability and open requests) into an empty
+database; `npm run db:seed -- --reset` wipes all data first. It refuses to run in
+production. Everyone signs in with `DEMO_PASSWORD` (default `LocalOnly123!`); usernames
+without `@` work at the login screen:
+
+| Username | Who |
+| --- | --- |
+| `admin` | Admin |
+| `support`, `sales` | Department managers |
+| `lead1`-`lead4` | Team leads (Tier 1, Tier 2, inbound sales, outbound sales) |
+| `noa`, `dana` | Employees (Tier 1, inbound sales) |
+| `yossi` | Tier 2 employee with extra permissions (approve requests, view insights) |
+
+To try it on a phone, phones need https: run `npx cloudflared tunnel --protocol http2 --url http://localhost:3000`
+and open the printed `https://….trycloudflare.com` address.
+
+## Tests
 
 ```bash
-cp .env.example .env
-docker compose up --build
+npm test          # unit tests (permissions, scheduling, insights, ...)
+npm run lint
+npm run test:e2e  # browser tests; needs the demo data and a running app
 ```
 
-The `app` service waits for PostgreSQL, runs the schema migration, and starts Next.js on `http://localhost:3000`. Run `npm run db:seed` separately when you want local demo data.
+The browser tests use `E2E_BASE_URL` (default `http://127.0.0.1:3000`) and `CHROME_PATH`
+(default `/usr/bin/google-chrome`). They create their own data in future weeks, so they can
+run again without reseeding.
 
-The seed creates local manager and employee fixtures using `DEMO_PASSWORD`
-(or a local-only default). The script refuses to run when `NODE_ENV=production`.
+## Netlify deployment
 
-## Netlify Deployment
+Deploy this branch as **its own Netlify site with its own database**. Its schema
+(`netlify/database/migrations/20261002000100_support_sales_schema.sql`, same as
+`db/schema.sql`) is not compatible with the NOC app's database.
 
-1. Connect this GitHub repository to a new Netlify project.
-2. In the project, open **Database** and initialize Netlify Database, or run `netlify database init --yes` from a linked checkout.
-3. Add these under **Project configuration → Environment variables** (redeploy after any change; values only apply to deploys made after they're set):
+1. Create a Netlify project from this repository and set the production branch to `SupportSales`.
+2. Under **Database**, initialize Netlify Database (or `netlify database init --yes`).
+3. Under **Project configuration → Environment variables** add (redeploy after changes):
 
    | Variable | What it is | How to get it |
    | --- | --- | --- |
    | `AUTH_SECRET` | Signs and encrypts login sessions. Required. | Any long random value, e.g. `openssl rand -hex 32`. |
-   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | The key pair that identifies this server to Apple's and Google's push services, for phone notifications. The private key is secret. | Run `npx web-push generate-vapid-keys` once, on any computer, and keep both values (e.g. in a password manager). Changing them later makes every user re-enable notifications from the bell. |
-   | `VAPID_SUBJECT` | A contact address sent to the push services with each notification; users never see it. | `mailto:` plus your email, e.g. `mailto:you@example.com`. |
-   | `CRON_SECRET` | A password the Sunday availability-reminder function sends to `/api/cron/availability-reminder`, so nobody else can trigger the reminder. Without it the reminder doesn't run. | Make one up, e.g. `openssl rand -hex 32`. Only needs to be set in Netlify. |
-   | `FILES_ACCESS_CODE` | The code everyone types once to open the Files page. Without it the page stays locked. | Choose it yourself. |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Identify this server to Apple's and Google's push services, for phone notifications. The private key is secret. | `npx web-push generate-vapid-keys`, once, on any computer. Keep both; changing them makes everyone re-enable notifications. |
+   | `VAPID_SUBJECT` | A contact address for the push services; users never see it. | `mailto:` plus your email. |
+   | `CRON_SECRET` | Lets only the Sunday reminder function call `/api/cron/availability-reminder`. | Make one up, e.g. `openssl rand -hex 32`. |
+   | `FILES_ACCESS_CODE` | The code everyone types once to open the Files page. | Choose it yourself. |
 
-   `DATABASE_URL` isn't needed on Netlify (Netlify Database provides the connection), and `URL` (the site address used by the scheduled function) is set by Netlify automatically.
-4. Deploy the branch. Netlify detects `@netlify/database`, provisions PostgreSQL, and applies the SQL files under `netlify/database/migrations/` before publishing. The scheduled reminder only runs on the published production deploy, not on branch or preview deploys.
-5. Create the first manager once with `npm run db:create-admin`, using the production database connection temporarily as `DATABASE_URL` and setting `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` locally. The demo accounts from `npm run db:seed` exist only locally; the seed script refuses to run in production.
-6. On each phone, open the Netlify address, install the app from the "התקנה" banner, sign in, and turn on notifications from the bell. An app installed from another address (e.g. a local tunnel) must be removed and installed again.
+4. Deploy. Netlify applies the migration before publishing; the Sunday reminder only runs on
+   the published production deploy.
+5. Create the first admin once: `npm run db:create-admin` with `DATABASE_URL` set to the
+   production database and `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` (12+ characters).
+   Then, signed in as that admin, create departments and teams in **Teams & shifts**, define
+   each team's shifts, and add people in **People**.
+6. On each phone: open the site, install it from the "התקנה" banner, sign in, and turn on
+   notifications from the bell.
 
-Public registration is disabled. Managers create employee accounts from the dashboard;
-the first manager is bootstrapped once with the production-safe admin script.
+## Code map
 
-## Scheduling Rules
-
-- The visible schedule is Sunday through Saturday, with a current date for every day.
-- The availability panel always targets the Sunday-through-Saturday week two weeks ahead, independently of the schedule week being viewed.
-- Employees can receive up to 6 shifts per week.
-- Unmarked availability is treated as available. Employees can mark a shift as preferred or unavailable and can set a full-day vacation (`חופש`) status.
-- An employee must have at least 8 hours of rest between shifts: back-to-back shifts (or any gap under 8 hours) are blocked, including across the Saturday-night/Sunday-morning week boundary and in swap requests. Exactly 8 hours of rest (the "8-8" case) and availability conflicts require a manager warning confirmation but do not prevent an intentional assignment.
-- Weekly summaries show shift count and work hours per employee.
-- Every shift can contain only one employee. Replacing an occupied shift requires an explicit manager confirmation.
-- Assigned names are bold and colored by shift: morning green, evening yellow, and night red.
-- Managers can export a UTF-8 CSV table containing employee, day, date, shift, time, and weekly totals.
-- Swap requests can be reviewed by the target employee and manager in either order. A rejection closes the request immediately; after both approve, the assignment is applied automatically.
-- Only one active swap request is allowed per source assignment; older duplicate requests are closed automatically when the database is migrated.
-- Managers can auto-generate a week's schedule with one click. The generator only fills currently empty shifts (existing assignments are left untouched) and, for each empty shift, prefers an employee who marked it as preferred, honors `UNAVAILABLE`/`חופש` blocks, and never exceeds an employee's weekly shift cap. It aims for at least 16 hours of rest (two other shifts) between any two of an employee's shifts; only when no employee can otherwise cover a shift does it fall back to 8 hours of rest. It never schedules back-to-back shifts, including across the week boundary; if a shift can't be covered with at least 8 hours of rest, it is left unfilled. Any shift nobody can cover is left unfilled and reported for manual assignment.
-
-## Personal Dashboard and Shared Files
-
-- After login, employees land on a personal dashboard (`/`) showing their name, shift count and hours worked this week and this month, and their next upcoming shift. Managers without a linked employee record see a simplified version pointing them to the schedule. The full schedule grid moved to `/schedule`; navigate between the dashboard, schedule, and files from the icon rail.
-- `/files` is a shared library where any signed-in user can upload a PDF, Word (`.docx`), Excel (`.xlsx`/`.xlsm`), CSV, or text file (5MB limit) for everyone to view and download. A file can be deleted by whoever uploaded it or by any manager.
-- The Files page is gated behind a shared access code (`FILES_ACCESS_CODE`): every user must enter it once before they can view or download anything there. Entering it correctly unlocks the page for 30 days per browser. If the code isn't configured, the page stays locked for everyone rather than opening by default.
-
-## Notifications, Requests and the Phone App
-
-- **Notifications:** a bell in the top bar lists each user's notifications with an unread count. With `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` configured (generate them once with `npx web-push generate-vapid-keys`), users can also turn on phone/desktop push notifications from the bell.
-- **Install as an app:** the site ships a web app manifest, icons and a service worker, so it can be added to a phone's home screen and opens full screen. On iPhone, push notifications only work after "Add to Home Screen" (iOS 16.4+).
-  - On phones, the login page and every signed-in page show an "התקנה" banner (dismissible for 14 days); a phone icon in the top bar stays available after it's closed. Nothing is shown once the app runs from the home screen.
-  - On Android (Chrome, Samsung Internet) the button opens the browser's own install window when the browser offers one. Otherwise, and always on iPhone, it opens step-by-step instructions for the visitor's phone and browser: Safari, other iPhone browsers, Samsung Internet, Chrome, or a social app's built-in browser (which must be opened in a real browser first). Platform detection lives in `src/lib/installPlatform.ts`.
-  - The installed iPhone app keeps its own login, separate from Safari, so users sign in once more inside it.
-- **Publishing a week:** managers press "פרסום הסידור" on the schedule page when a week is ready (the confirmation warns about shifts still empty). Every active employee gets a notification, on the bell and as a phone notification, listing their own shifts that week; tapping it opens `/schedule?week=<Sunday>`. Pressing it again later ("שליחת עדכון על הסידור") sends an "updated schedule" notification. Published weeks are stored in `published_weeks`.
-- **Swaps:** the target employee is notified of a request; when they accept, the requester is told and managers are asked to approve; when a manager approves or declines, both employees are notified.
-- **Shift giveaways** (`/requests`): an employee offers one of their future shifts to everyone; another employee takes it (rest, weekly-limit and vacation rules apply); managers approve the handover. Each step notifies the people involved.
-- **Vacation requests** (`/requests`): employees request a date range; managers approve or decline. Approval marks every day as full-day vacation (`חופש`) and removes the employee's shifts on those days, leaving them empty for the manager to refill. Swaps and giveaways can't hand a shift to someone on a vacation day.
-- **Availability reminder:** every Sunday at 06:00 UTC the Netlify scheduled function `netlify/functions/availability-reminder.mts` reminds employees who haven't filled in the week that is open for availability (deadline: Tuesday). Employees count as done once they change any availability or press "סיימתי למלא". Requires `CRON_SECRET`.
-
-## Security
-
-- The session cookie is encrypted and authenticated, `HttpOnly`, `SameSite=Lax`, and `Secure` in production. Sessions expire after eight hours.
-- Every API request reloads the current user and role from PostgreSQL before applying manager or employee permissions.
-- Public registration is disabled; only a manager can create employee accounts.
-- Login failures are rate-limited and security response headers are enabled.
-- Browser local storage contains only the light/dark theme preference. Authentication data and employee data are not stored there.
-
-## Verification
-
-```bash
-npm run test
-npm run lint
-npm run build
-npm run test:e2e
-```
-
-The end-to-end tests expect the Docker stack on `http://localhost:3000` and use the locally installed Google Chrome binary.
+- `src/lib/` — pure logic shared by server and browser: `permissions.ts`, `scheduling.ts`
+  (validation, coverage, auto-fill), `shiftTime.ts`, `insights.ts`, `schedulePublish.ts`,
+  `scheduleExport.ts`, `dates.ts`, `labels.ts`.
+- `src/server/` — database access (`people.ts`, `org.ts`, `schedule.ts`, `requests.ts`,
+  `files.ts`, `notifications.ts`), session/auth, and permission helpers (`access.ts`, `shell.ts`).
+- `src/app/api/` — route handlers; each checks the signed-in person's permission for the team.
+- `src/components/views/` — one view per screen; `charts/` holds the chart components
+  (stat tiles, sparkline, heatmap, bars) built on the tokens in `src/app/globals.css`.

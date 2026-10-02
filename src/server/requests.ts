@@ -1,420 +1,411 @@
+import type pg from "pg";
 import { addDays, diffDays } from "@/lib/dates";
-import { getShiftStartInstant } from "@/lib/shifts";
-import type { ShiftType } from "@/lib/types";
+import { normalizeTime } from "@/lib/shiftTime";
+import type { Giveaway, GiveawayStatus, SwapRequest, SwapStatus, VacationRequest, VacationStatus } from "@/lib/types";
 import { getPool, query } from "./db";
 
-export type GiveawayStatus = "OPEN" | "PENDING_MANAGER" | "APPROVED" | "DECLINED_BY_MANAGER" | "CANCELLED";
-export type VacationStatus = "PENDING" | "APPROVED" | "DECLINED" | "CANCELLED";
+async function inTransaction<T>(work: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
-export interface ShiftGiveaway {
+/** Thrown when a request can't be applied because the schedule changed underneath it. */
+export class RequestConflictError extends Error {}
+
+// ---------------------------------------------------------------- swaps
+
+interface SwapRow {
   id: string;
-  status: GiveawayStatus;
-  assignmentId: string;
-  weekStart: string;
-  dayIndex: number;
-  shiftType: ShiftType;
-  offeredByEmployeeId: string;
-  offeredByName: string;
-  takenByEmployeeId: string | null;
-  takenByName: string | null;
-  createdAt: string;
-  decidedAt: string | null;
+  requester_assignment_id: string | null;
+  target_assignment_id: string | null;
+  requester_id: string;
+  requester_name: string;
+  target_user_id: string;
+  target_user_name: string;
+  team_id: string;
+  shift_label: string;
+  target_shift_label: string | null;
+  status: SwapStatus;
+  created_at: string | Date;
 }
 
-export interface VacationRequest {
-  id: string;
-  employeeId: string;
-  employeeName: string;
-  startDate: string;
-  endDate: string;
-  note: string;
-  status: VacationStatus;
-  removedShiftCount: number;
-  createdAt: string;
-  decidedAt: string | null;
+const SWAP_SELECT = `
+  SELECT swaps.*, requester.name AS requester_name, target.name AS target_user_name
+  FROM swap_requests swaps
+  JOIN users requester ON requester.id = swaps.requester_id
+  JOIN users target ON target.id = swaps.target_user_id`;
+
+function toSwap(row: SwapRow): SwapRequest {
+  return {
+    id: row.id,
+    requesterAssignmentId: row.requester_assignment_id,
+    targetAssignmentId: row.target_assignment_id,
+    requesterId: row.requester_id,
+    requesterName: row.requester_name,
+    targetUserId: row.target_user_id,
+    targetUserName: row.target_user_name,
+    teamId: row.team_id,
+    shiftLabel: row.shift_label,
+    targetShiftLabel: row.target_shift_label,
+    status: row.status,
+    createdAt: new Date(row.created_at).toISOString()
+  };
 }
 
-export interface RemovedShift {
-  weekStart: string;
-  dayIndex: number;
-  shiftType: ShiftType;
+export async function findSwap(id: string) {
+  const [row] = await query<SwapRow>(`${SWAP_SELECT} WHERE swaps.id = $1`, [id]);
+  return row ? toSwap(row) : null;
 }
+
+/** Swaps the person is part of, plus those waiting for approval in the given teams (last 60 days). */
+export async function listSwaps(userId: string, approverTeamIds: string[]) {
+  const rows = await query<SwapRow>(
+    `${SWAP_SELECT}
+     WHERE (swaps.requester_id = $1 OR swaps.target_user_id = $1
+            OR (swaps.team_id = ANY($2::uuid[]) AND swaps.status = 'PENDING_MANAGER'))
+       AND swaps.created_at > now() - interval '60 days'
+     ORDER BY swaps.created_at DESC`,
+    [userId, approverTeamIds]
+  );
+  return rows.map(toSwap);
+}
+
+export async function createSwap(input: {
+  requesterAssignmentId: string;
+  targetAssignmentId: string | null;
+  requesterId: string;
+  targetUserId: string;
+  teamId: string;
+  shiftLabel: string;
+  targetShiftLabel: string | null;
+}) {
+  try {
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO swap_requests
+         (requester_assignment_id, target_assignment_id, requester_id, target_user_id, team_id, shift_label, target_shift_label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [
+        input.requesterAssignmentId,
+        input.targetAssignmentId,
+        input.requesterId,
+        input.targetUserId,
+        input.teamId,
+        input.shiftLabel,
+        input.targetShiftLabel
+      ]
+    );
+    return findSwap(row.id);
+  } catch (error) {
+    if ((error as { code?: string }).code === "23505") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function setSwapStatus(id: string, from: SwapStatus[], to: SwapStatus, decidedBy: string | null) {
+  const column = to === "PENDING_MANAGER" || to === "DECLINED_BY_EMPLOYEE" ? "employee_decided_at" : "manager_decided_at";
+  const [row] = await query<{ id: string }>(
+    `UPDATE swap_requests SET status = $3, ${column} = now(), decided_by = COALESCE($4, decided_by)
+     WHERE id = $1 AND status = ANY($2::text[])
+     RETURNING id`,
+    [id, from, to, decidedBy]
+  );
+  return row ? findSwap(row.id) : null;
+}
+
+/** Moves the shifts between the two people and marks the swap approved. */
+export async function applySwap(swap: SwapRequest, decidedBy: string) {
+  await inTransaction(async (client) => {
+    const locked = await client.query(
+      "SELECT status FROM swap_requests WHERE id = $1 AND status = 'PENDING_MANAGER' FOR UPDATE",
+      [swap.id]
+    );
+    if (locked.rowCount === 0) {
+      throw new RequestConflictError("הבקשה כבר טופלה.");
+    }
+    const moved = await client.query(
+      "UPDATE shift_assignments SET user_id = $2 WHERE id = $1 AND user_id = $3",
+      [swap.requesterAssignmentId, swap.targetUserId, swap.requesterId]
+    );
+    if (moved.rowCount === 0) {
+      throw new RequestConflictError("המשמרת השתנתה מאז שהבקשה נשלחה.");
+    }
+    if (swap.targetAssignmentId) {
+      const back = await client.query(
+        "UPDATE shift_assignments SET user_id = $2 WHERE id = $1 AND user_id = $3",
+        [swap.targetAssignmentId, swap.requesterId, swap.targetUserId]
+      );
+      if (back.rowCount === 0) {
+        throw new RequestConflictError("המשמרת של העמית/ה השתנתה מאז שהבקשה נשלחה.");
+      }
+    }
+    await client.query(
+      "UPDATE swap_requests SET status = 'APPROVED', manager_decided_at = now(), decided_by = $2 WHERE id = $1",
+      [swap.id, decidedBy]
+    );
+  }).catch((error) => {
+    if ((error as { code?: string }).code === "23505") {
+      throw new RequestConflictError("אחד העובדים כבר משובץ למשמרת הזו באותו יום.");
+    }
+    throw error;
+  });
+  return findSwap(swap.id);
+}
+
+// ---------------------------------------------------------------- giveaways
 
 interface GiveawayRow {
   id: string;
-  status: GiveawayStatus;
   assignment_id: string;
-  week_start: string | Date;
-  day_index: number;
-  shift_type: ShiftType;
-  offered_by_employee_id: string;
+  offered_by: string;
   offered_by_name: string;
-  taken_by_employee_id: string | null;
+  taken_by: string | null;
   taken_by_name: string | null;
+  team_id: string;
+  work_date: string;
+  shift_name: string;
+  starts_at: string;
+  ends_at: string;
+  status: GiveawayStatus;
   created_at: string | Date;
-  decided_at: string | Date | null;
 }
-
-interface VacationRow {
-  id: string;
-  employee_id: string;
-  employee_name: string;
-  start_date: string | Date;
-  end_date: string | Date;
-  note: string;
-  status: VacationStatus;
-  removed_shift_count: number;
-  created_at: string | Date;
-  decided_at: string | Date | null;
-}
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function isUuid(value: string) {
-  return UUID_PATTERN.test(value);
-}
-
-const ACTIVE_GIVEAWAY_STATUSES = ["OPEN", "PENDING_MANAGER"];
 
 const GIVEAWAY_SELECT = `
-  SELECT g.id, g.status, g.assignment_id, g.offered_by_employee_id, g.taken_by_employee_id,
-         g.created_at, g.decided_at,
-         a.week_start, a.day_index, a.shift_type,
-         offered.name AS offered_by_name, taken.name AS taken_by_name
-  FROM shift_giveaways g
-  JOIN shift_assignments a ON a.id = g.assignment_id
-  JOIN employees offered ON offered.id = g.offered_by_employee_id
-  LEFT JOIN employees taken ON taken.id = g.taken_by_employee_id`;
+  SELECT giveaways.*, offered.name AS offered_by_name, taken.name AS taken_by_name,
+         assignments.work_date, assignments.starts_at, assignments.ends_at, templates.name AS shift_name
+  FROM shift_giveaways giveaways
+  JOIN shift_assignments assignments ON assignments.id = giveaways.assignment_id
+  JOIN shift_templates templates ON templates.id = assignments.shift_template_id
+  JOIN users offered ON offered.id = giveaways.offered_by
+  LEFT JOIN users taken ON taken.id = giveaways.taken_by`;
 
-// Active giveaways plus the ones decided in the last 30 days, soonest shift first.
-export async function listGiveaways(): Promise<ShiftGiveaway[]> {
+function toGiveaway(row: GiveawayRow): Giveaway {
+  return {
+    id: row.id,
+    assignmentId: row.assignment_id,
+    offeredBy: row.offered_by,
+    offeredByName: row.offered_by_name,
+    takenBy: row.taken_by,
+    takenByName: row.taken_by_name,
+    teamId: row.team_id,
+    workDate: row.work_date,
+    shiftName: row.shift_name,
+    startsAt: normalizeTime(row.starts_at),
+    endsAt: normalizeTime(row.ends_at),
+    status: row.status,
+    createdAt: new Date(row.created_at).toISOString()
+  };
+}
+
+export async function findGiveaway(id: string) {
+  const [row] = await query<GiveawayRow>(`${GIVEAWAY_SELECT} WHERE giveaways.id = $1`, [id]);
+  return row ? toGiveaway(row) : null;
+}
+
+/** Open offers in the person's teams, their own giveaways, and those awaiting approval in approver teams. */
+export async function listGiveaways(userId: string, boardTeamIds: string[], approverTeamIds: string[]) {
   const rows = await query<GiveawayRow>(
     `${GIVEAWAY_SELECT}
-     WHERE g.status = ANY($1::text[]) OR g.decided_at > now() - interval '30 days'
-     ORDER BY (a.week_start + a.day_index),
-       CASE a.shift_type WHEN 'MORNING' THEN 0 WHEN 'EVENING' THEN 1 ELSE 2 END`,
-    [ACTIVE_GIVEAWAY_STATUSES]
+     WHERE ((giveaways.team_id = ANY($2::uuid[]) AND giveaways.status = 'OPEN' AND assignments.work_date >= CURRENT_DATE)
+            OR giveaways.offered_by = $1 OR giveaways.taken_by = $1
+            OR (giveaways.team_id = ANY($3::uuid[]) AND giveaways.status = 'PENDING_MANAGER'))
+       AND giveaways.created_at > now() - interval '60 days'
+     ORDER BY assignments.work_date, assignments.starts_at`,
+    [userId, boardTeamIds, approverTeamIds]
   );
   return rows.map(toGiveaway);
 }
 
-export async function findGiveaway(id: string): Promise<ShiftGiveaway | null> {
-  const [row] = await query<GiveawayRow>(`${GIVEAWAY_SELECT} WHERE g.id = $1`, [id]);
-  return row ? toGiveaway(row) : null;
-}
-
-export async function listActiveGiveawayAssignmentIds(): Promise<string[]> {
-  const rows = await query<{ assignment_id: string }>(
-    "SELECT assignment_id FROM shift_giveaways WHERE status = ANY($1::text[])",
-    [ACTIVE_GIVEAWAY_STATUSES]
-  );
-  return rows.map((row) => row.assignment_id);
-}
-
-// Returns null when the shift is already offered.
-export async function createGiveaway(assignmentId: string, employeeId: string) {
-  const [row] = await query<{ id: string }>(
-    `INSERT INTO shift_giveaways (assignment_id, offered_by_employee_id)
-     VALUES ($1, $2)
-     ON CONFLICT (assignment_id) WHERE status IN ('OPEN', 'PENDING_MANAGER') DO NOTHING
-     RETURNING id`,
-    [assignmentId, employeeId]
-  );
-  return row ? findGiveaway(row.id) : null;
-}
-
-export async function takeGiveaway(id: string, takerEmployeeId: string) {
-  const [row] = await query<{ id: string }>(
-    `UPDATE shift_giveaways
-     SET status = 'PENDING_MANAGER', taken_by_employee_id = $2, taken_at = now()
-     WHERE id = $1 AND status = 'OPEN' AND offered_by_employee_id <> $2
-     RETURNING id`,
-    [id, takerEmployeeId]
-  );
-  return row ? findGiveaway(row.id) : null;
-}
-
-export async function cancelGiveaway(id: string) {
-  const [row] = await query<{ id: string }>(
-    `UPDATE shift_giveaways SET status = 'CANCELLED', decided_at = now()
-     WHERE id = $1 AND status = ANY($2::text[])
-     RETURNING id`,
-    [id, ACTIVE_GIVEAWAY_STATUSES]
-  );
-  return row ? findGiveaway(row.id) : null;
-}
-
-export async function declineGiveaway(id: string) {
-  const [row] = await query<{ id: string }>(
-    `UPDATE shift_giveaways SET status = 'DECLINED_BY_MANAGER', decided_at = now()
-     WHERE id = $1 AND status = 'PENDING_MANAGER'
-     RETURNING id`,
-    [id]
-  );
-  return row ? findGiveaway(row.id) : null;
-}
-
-// Hands the shift over to the employee who took it. Returns null if the giveaway is no
-// longer waiting for approval or the shift no longer belongs to the employee who offered it.
-export async function approveGiveaway(id: string) {
-  const client = await getPool().connect();
+export async function createGiveaway(assignmentId: string, offeredBy: string, teamId: string) {
   try {
-    await client.query("BEGIN");
-    const giveawayResult = await client.query<{
-      assignment_id: string;
-      offered_by_employee_id: string;
-      taken_by_employee_id: string | null;
-    }>(
-      `SELECT assignment_id, offered_by_employee_id, taken_by_employee_id
-       FROM shift_giveaways WHERE id = $1 AND status = 'PENDING_MANAGER' FOR UPDATE`,
-      [id]
+    const [row] = await query<{ id: string }>(
+      "INSERT INTO shift_giveaways (assignment_id, offered_by, team_id) VALUES ($1, $2, $3) RETURNING id",
+      [assignmentId, offeredBy, teamId]
     );
-    const giveaway = giveawayResult.rows[0];
-    const assignmentResult = giveaway
-      ? await client.query<{ employee_id: string }>(
-          "SELECT employee_id FROM shift_assignments WHERE id = $1 FOR UPDATE",
-          [giveaway.assignment_id]
-        )
-      : null;
-    if (
-      !giveaway?.taken_by_employee_id ||
-      assignmentResult?.rows[0]?.employee_id !== giveaway.offered_by_employee_id
-    ) {
-      await client.query("ROLLBACK");
+    return findGiveaway(row.id);
+  } catch (error) {
+    if ((error as { code?: string }).code === "23505") {
       return null;
     }
-
-    await client.query("UPDATE shift_assignments SET employee_id = $2 WHERE id = $1", [
-      giveaway.assignment_id,
-      giveaway.taken_by_employee_id
-    ]);
-    await supersedeSwapsForAssignments(client, [giveaway.assignment_id]);
-    await client.query(
-      "UPDATE shift_giveaways SET status = 'APPROVED', decided_at = now() WHERE id = $1",
-      [id]
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
     throw error;
-  } finally {
-    client.release();
   }
-  return findGiveaway(id);
+}
+
+export async function takeGiveaway(id: string, takenBy: string) {
+  const [row] = await query<{ id: string }>(
+    `UPDATE shift_giveaways SET taken_by = $2, taken_at = now(), status = 'PENDING_MANAGER'
+     WHERE id = $1 AND status = 'OPEN' RETURNING id`,
+    [id, takenBy]
+  );
+  return row ? findGiveaway(row.id) : null;
+}
+
+export async function closeGiveaway(id: string, from: GiveawayStatus[], to: "CANCELLED" | "DECLINED_BY_MANAGER", decidedBy: string) {
+  const [row] = await query<{ id: string }>(
+    `UPDATE shift_giveaways SET status = $3, decided_at = now(), decided_by = $4
+     WHERE id = $1 AND status = ANY($2::text[]) RETURNING id`,
+    [id, from, to, decidedBy]
+  );
+  return row ? findGiveaway(row.id) : null;
+}
+
+export async function approveGiveaway(giveaway: Giveaway, decidedBy: string) {
+  await inTransaction(async (client) => {
+    const locked = await client.query(
+      "SELECT taken_by FROM shift_giveaways WHERE id = $1 AND status = 'PENDING_MANAGER' FOR UPDATE",
+      [giveaway.id]
+    );
+    if (locked.rowCount === 0 || !locked.rows[0].taken_by) {
+      throw new RequestConflictError("הבקשה כבר טופלה.");
+    }
+    const moved = await client.query(
+      "UPDATE shift_assignments SET user_id = $2 WHERE id = $1 AND user_id = $3",
+      [giveaway.assignmentId, locked.rows[0].taken_by, giveaway.offeredBy]
+    );
+    if (moved.rowCount === 0) {
+      throw new RequestConflictError("המשמרת השתנתה מאז שהוצעה למסירה.");
+    }
+    await client.query(
+      "UPDATE shift_giveaways SET status = 'APPROVED', decided_at = now(), decided_by = $2 WHERE id = $1",
+      [giveaway.id, decidedBy]
+    );
+  }).catch((error) => {
+    if ((error as { code?: string }).code === "23505") {
+      throw new RequestConflictError("העובד/ת כבר משובץ/ת למשמרת הזו באותו יום.");
+    }
+    throw error;
+  });
+  return findGiveaway(giveaway.id);
+}
+
+// ---------------------------------------------------------------- vacations
+
+interface VacationRow {
+  id: string;
+  user_id: string;
+  user_name: string;
+  team_id: string | null;
+  start_date: string;
+  end_date: string;
+  note: string;
+  status: VacationStatus;
+  removed_shift_count: number;
+  created_at: string | Date;
 }
 
 const VACATION_SELECT = `
-  SELECT v.*, e.name AS employee_name
-  FROM vacation_requests v
-  JOIN employees e ON e.id = v.employee_id`;
-
-// All requests for one employee, or (without an employee) every pending request plus
-// those decided in the last 60 days, for managers.
-export async function listVacationRequests(employeeId?: string): Promise<VacationRequest[]> {
-  const rows = employeeId
-    ? await query<VacationRow>(
-        `${VACATION_SELECT} WHERE v.employee_id = $1 ORDER BY v.start_date DESC LIMIT 50`,
-        [employeeId]
-      )
-    : await query<VacationRow>(
-        `${VACATION_SELECT}
-         WHERE v.status = 'PENDING' OR v.decided_at > now() - interval '60 days'
-         ORDER BY (v.status = 'PENDING') DESC, v.start_date ASC`
-      );
-  return rows.map(toVacation);
-}
-
-export async function findVacationRequest(id: string): Promise<VacationRequest | null> {
-  const [row] = await query<VacationRow>(`${VACATION_SELECT} WHERE v.id = $1`, [id]);
-  return row ? toVacation(row) : null;
-}
-
-export async function createVacationRequest(input: {
-  employeeId: string;
-  startDate: string;
-  endDate: string;
-  note: string;
-}) {
-  const [row] = await query<{ id: string }>(
-    `INSERT INTO vacation_requests (employee_id, start_date, end_date, note)
-     VALUES ($1, $2, $3, $4) RETURNING id`,
-    [input.employeeId, input.startDate, input.endDate, input.note]
-  );
-  return findVacationRequest(row.id);
-}
-
-export async function closeVacationRequest(id: string, status: "DECLINED" | "CANCELLED") {
-  const [row] = await query<{ id: string }>(
-    `UPDATE vacation_requests SET status = $2, decided_at = now()
-     WHERE id = $1 AND status = 'PENDING' RETURNING id`,
-    [id, status]
-  );
-  return row ? findVacationRequest(row.id) : null;
-}
-
-// Marks every day of the vacation as full-day time off (so scheduling skips it) and
-// removes the employee's shifts on those days, leaving them empty for the manager.
-export async function approveVacationRequest(id: string) {
-  const client = await getPool().connect();
-  let removedShifts: RemovedShift[] = [];
-  try {
-    await client.query("BEGIN");
-    const requestResult = await client.query<VacationRow>(
-      "SELECT * FROM vacation_requests WHERE id = $1 AND status = 'PENDING' FOR UPDATE",
-      [id]
-    );
-    const request = requestResult.rows[0];
-    if (!request) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-    const startDate = toDateOnlyString(request.start_date);
-    const endDate = toDateOnlyString(request.end_date);
-
-    for (let offset = 0; offset <= diffDays(startDate, endDate); offset += 1) {
-      const date = addDays(startDate, offset);
-      const dayIndex = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-      await client.query(
-        `INSERT INTO availability_blocks (employee_id, week_start, day_index, reason, status)
-         VALUES ($1, $2, $3, 'חופשה מאושרת', 'TIME_OFF')
-         ON CONFLICT (employee_id, week_start, day_index) WHERE status = 'TIME_OFF' DO NOTHING`,
-        [request.employee_id, addDays(date, -dayIndex), dayIndex]
-      );
-    }
-
-    const removedResult = await client.query<{
-      id: string;
-      week_start: string | Date;
-      day_index: number;
-      shift_type: ShiftType;
-    }>(
-      `SELECT id, week_start, day_index, shift_type FROM shift_assignments
-       WHERE employee_id = $1
-         AND (week_start + day_index) BETWEEN $2::date AND $3::date
-       ORDER BY (week_start + day_index)`,
-      [request.employee_id, startDate, endDate]
-    );
-    // Only shifts that haven't started yet are removed: if the approval comes late,
-    // shifts the employee already worked stay in the schedule (and in their pay).
-    const now = new Date();
-    const upcomingRows = removedResult.rows.filter(
-      (row) => getShiftStartInstant(toDateOnlyString(row.week_start), row.day_index, row.shift_type) > now
-    );
-    const removedIds = upcomingRows.map((row) => row.id);
-    removedShifts = upcomingRows.map((row) => ({
-      weekStart: toDateOnlyString(row.week_start),
-      dayIndex: row.day_index,
-      shiftType: row.shift_type
-    }));
-    if (removedIds.length > 0) {
-      await supersedeSwapsForAssignments(client, removedIds);
-      await client.query("DELETE FROM shift_assignments WHERE id = ANY($1::uuid[])", [removedIds]);
-    }
-
-    await client.query(
-      `UPDATE vacation_requests
-       SET status = 'APPROVED', decided_at = now(), removed_shift_count = $2
-       WHERE id = $1`,
-      [id, removedIds.length]
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-  const request = await findVacationRequest(id);
-  return request ? { request, removedShifts } : null;
-}
-
-async function supersedeSwapsForAssignments(
-  client: import("pg").PoolClient,
-  assignmentIds: string[]
-) {
-  await client.query(
-    `UPDATE shift_swap_requests SET status = 'SUPERSEDED'
-     WHERE status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER')
-       AND (requester_assignment_id = ANY($1::uuid[]) OR target_assignment_id = ANY($1::uuid[]))`,
-    [assignmentIds]
-  );
-}
-
-function toGiveaway(row: GiveawayRow): ShiftGiveaway {
-  return {
-    id: row.id,
-    status: row.status,
-    assignmentId: row.assignment_id,
-    weekStart: toDateOnlyString(row.week_start),
-    dayIndex: row.day_index,
-    shiftType: row.shift_type,
-    offeredByEmployeeId: row.offered_by_employee_id,
-    offeredByName: row.offered_by_name,
-    takenByEmployeeId: row.taken_by_employee_id,
-    takenByName: row.taken_by_name,
-    createdAt: new Date(row.created_at).toISOString(),
-    decidedAt: row.decided_at ? new Date(row.decided_at).toISOString() : null
-  };
-}
+  SELECT vacations.*, users.name AS user_name, users.team_id
+  FROM vacation_requests vacations
+  JOIN users ON users.id = vacations.user_id`;
 
 function toVacation(row: VacationRow): VacationRequest {
   return {
     id: row.id,
-    employeeId: row.employee_id,
-    employeeName: row.employee_name,
-    startDate: toDateOnlyString(row.start_date),
-    endDate: toDateOnlyString(row.end_date),
+    userId: row.user_id,
+    userName: row.user_name,
+    teamId: row.team_id,
+    startDate: row.start_date,
+    endDate: row.end_date,
     note: row.note,
     status: row.status,
     removedShiftCount: row.removed_shift_count,
-    createdAt: new Date(row.created_at).toISOString(),
-    decidedAt: row.decided_at ? new Date(row.decided_at).toISOString() : null
+    createdAt: new Date(row.created_at).toISOString()
   };
 }
 
-// pg returns DATE columns as local-midnight Date objects; format them without a UTC
-// shift so a date never moves to the previous day.
-function toDateOnlyString(value: string | Date): string {
-  if (typeof value === "string") {
-    return value.slice(0, 10);
-  }
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${value.getFullYear()}-${month}-${day}`;
+export async function findVacation(id: string) {
+  const [row] = await query<VacationRow>(`${VACATION_SELECT} WHERE vacations.id = $1`, [id]);
+  return row ? toVacation(row) : null;
 }
 
-export async function markAvailabilitySubmitted(employeeId: string, weekStart: string) {
-  await query(
-    `INSERT INTO availability_submissions (employee_id, week_start)
-     VALUES ($1, $2)
-     ON CONFLICT (employee_id, week_start) DO UPDATE SET submitted_at = now()`,
-    [employeeId, weekStart]
+export async function listVacations(userId: string, approverTeamIds: string[]) {
+  const rows = await query<VacationRow>(
+    `${VACATION_SELECT}
+     WHERE (vacations.user_id = $1 OR (users.team_id = ANY($2::uuid[]) AND vacations.status = 'PENDING'))
+       AND vacations.end_date >= CURRENT_DATE - 60
+     ORDER BY vacations.start_date`,
+    [userId, approverTeamIds]
   );
+  return rows.map(toVacation);
 }
 
-export async function findAvailabilitySubmission(employeeId: string, weekStart: string) {
-  const [row] = await query<{ submitted_at: string | Date }>(
-    "SELECT submitted_at FROM availability_submissions WHERE employee_id = $1 AND week_start = $2",
-    [employeeId, weekStart]
+/** Approved vacations of the given teams overlapping [from, to). */
+export async function listApprovedVacations(teamIds: string[], from: string, to: string) {
+  const rows = await query<VacationRow>(
+    `${VACATION_SELECT}
+     WHERE users.team_id = ANY($1::uuid[]) AND vacations.status = 'APPROVED'
+       AND vacations.start_date < $3 AND vacations.end_date >= $2`,
+    [teamIds, from, to]
   );
-  return row ? new Date(row.submitted_at).toISOString() : null;
+  return rows.map(toVacation);
 }
 
-// Active employees who can sign in and have neither confirmed nor changed their
-// availability for the given week.
-export async function listUserIdsMissingAvailability(weekStart: string): Promise<string[]> {
-  const rows = await query<{ user_id: string }>(
-    `SELECT e.user_id FROM employees e
-     WHERE e.is_active AND e.user_id IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM availability_submissions s
-         WHERE s.employee_id = e.id AND s.week_start = $1
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM availability_blocks b
-         WHERE b.employee_id = e.id AND b.week_start = $1
-       )`,
-    [weekStart]
+export async function createVacation(userId: string, startDate: string, endDate: string, note: string) {
+  const [row] = await query<{ id: string }>(
+    "INSERT INTO vacation_requests (user_id, start_date, end_date, note) VALUES ($1, $2, $3, $4) RETURNING id",
+    [userId, startDate, endDate, note]
   );
-  return rows.map((row) => row.user_id);
+  return findVacation(row.id);
+}
+
+export async function closeVacation(id: string, to: "CANCELLED" | "DECLINED", decidedBy: string) {
+  const [row] = await query<{ id: string }>(
+    `UPDATE vacation_requests SET status = $2, decided_at = now(), decided_by = $3
+     WHERE id = $1 AND status = 'PENDING' RETURNING id`,
+    [id, to, decidedBy]
+  );
+  return row ? findVacation(row.id) : null;
+}
+
+/** Marks every day as time off, removes the person's shifts on those days, and approves. */
+export async function approveVacation(vacation: VacationRequest, decidedBy: string) {
+  await inTransaction(async (client) => {
+    const locked = await client.query(
+      "SELECT id FROM vacation_requests WHERE id = $1 AND status = 'PENDING' FOR UPDATE",
+      [vacation.id]
+    );
+    if (locked.rowCount === 0) {
+      throw new RequestConflictError("הבקשה כבר טופלה.");
+    }
+    const days = diffDays(vacation.startDate, vacation.endDate) + 1;
+    const dates = Array.from({ length: days }, (_, index) => addDays(vacation.startDate, index));
+    await client.query(
+      "DELETE FROM availability_entries WHERE user_id = $1 AND work_date = ANY($2::date[])",
+      [vacation.userId, dates]
+    );
+    await client.query(
+      `INSERT INTO availability_entries (user_id, work_date, shift_template_id, status, note)
+       SELECT $1, day, NULL, 'TIME_OFF', 'חופשה מאושרת' FROM unnest($2::date[]) AS day`,
+      [vacation.userId, dates]
+    );
+    // Giveaways and swaps of the removed shifts go with them (ON DELETE CASCADE / SET NULL).
+    const removed = await client.query(
+      "DELETE FROM shift_assignments WHERE user_id = $1 AND work_date BETWEEN $2 AND $3",
+      [vacation.userId, vacation.startDate, vacation.endDate]
+    );
+    // Open swaps whose shift was just removed can no longer happen.
+    await client.query(
+      `UPDATE swap_requests SET status = 'CANCELLED'
+       WHERE status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER')
+         AND (requester_assignment_id IS NULL OR (target_shift_label IS NOT NULL AND target_assignment_id IS NULL))`
+    );
+    await client.query(
+      `UPDATE vacation_requests SET status = 'APPROVED', decided_at = now(), decided_by = $2, removed_shift_count = $3
+       WHERE id = $1`,
+      [vacation.id, decidedBy, removed.rowCount ?? 0]
+    );
+  });
+  return findVacation(vacation.id);
 }
