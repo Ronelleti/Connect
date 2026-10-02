@@ -16,13 +16,13 @@ test("swap: colleague accepts, the team lead approves, the shift moves", async (
   await admin.context().close();
 
   const noaId = people.get("נועה כהן")!.id;
-  const colleague = [...people.values()].find((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("t1.0"))!;
+  const colleague = [...people.values()].find((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("service.0"))!;
 
   const lead = await signIn(browser, "lead1");
   const noa = await signIn(browser, "noa");
   const other = await signIn(browser, colleague.email);
   try {
-    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const { team, shifts } = await teamByName(lead, "שירות לקוחות");
     const evening = shifts.find((shift) => shift.name === "ערב")!;
     await clearDay(lead, team.id, week, [noaId, colleague.id], [addDays(date, -1), date, addDays(date, 1)]);
     const created = await call<{ assignment: { id: string } }>(lead, "/api/assignments", "POST", { userId: noaId, shiftTemplateId: evening.id, workDate: date, acknowledgeWarnings: true });
@@ -62,7 +62,7 @@ test("vacation: approval marks the days off and removes the shifts", async ({ br
   const lead = await signIn(browser, "lead1");
   const noa = await signIn(browser, "noa");
   try {
-    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const { team, shifts } = await teamByName(lead, "שירות לקוחות");
     const me = await call<{ user: { id: string } }>(noa, "/api/me");
     await clearDay(lead, team.id, week, [me.body.user.id], [start, end]);
     const morning = shifts.find((shift) => shift.name === "בוקר")!;
@@ -98,16 +98,16 @@ test("giveaway: offered to the team, taken by a colleague, approved", async ({ b
   const people = await peopleByName(admin);
   await admin.context().close();
   const noaId = people.get("נועה כהן")!.id;
-  const colleague = [...people.values()].filter((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("t1.1"))[0];
+  const colleague = [...people.values()].filter((person) => person.teamId === people.get("נועה כהן")!.teamId && person.email.startsWith("service.1"))[0];
 
   const lead = await signIn(browser, "lead1");
   const noa = await signIn(browser, "noa");
   const other = await signIn(browser, colleague.email);
   try {
-    const { team, shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const { team, shifts } = await teamByName(lead, "שירות לקוחות");
     await clearDay(lead, team.id, week, [noaId, colleague.id], [addDays(date, -1), date, addDays(date, 1)]);
-    const night = shifts.find((shift) => shift.name === "לילה")!;
-    const created = await call<{ assignment: { id: string } }>(lead, "/api/assignments", "POST", { userId: noaId, shiftTemplateId: night.id, workDate: date, acknowledgeWarnings: true });
+    const evening = shifts.find((shift) => shift.name === "ערב")!;
+    const created = await call<{ assignment: { id: string } }>(lead, "/api/assignments", "POST", { userId: noaId, shiftTemplateId: evening.id, workDate: date, acknowledgeWarnings: true });
     expect(created.status).toBe(201);
 
     await noa.goto("/requests");

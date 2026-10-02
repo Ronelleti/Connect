@@ -1,11 +1,12 @@
-// Local demo data for Wecom Support & Sales: 2 departments, 4 teams, ~75 people, each
-// team's shifts, six weeks of schedules, availability and a few open requests.
+// Local demo data for Wecom Support & Sales: three departments with one team each
+// (שירות לקוחות, תמיכה טכנית, מכירות), team leads, support experts who can work in any
+// team, senior managers, six weeks of schedules, availability and a few open requests.
 //
 //   npm run db:seed            fills an empty database
 //   npm run db:seed -- --reset wipes ALL data first (local only)
 //
 // Everyone signs in with DEMO_PASSWORD (default LocalOnly123!). Usernames without "@"
-// work at the login screen, e.g. "admin", "support", "lead1", "noa".
+// work at the login screen, e.g. "admin", "manager1", "lead1", "expert1", "noa".
 import { randomBytes, scrypt } from "node:crypto";
 import { promisify } from "node:util";
 import process from "node:process";
@@ -61,37 +62,30 @@ const LAST = [
 
 const WEEKDAYS = { all: 127, sunThu: 0b0011111, fri: 0b0100000, friSat: 0b1100000 };
 
+// Each department has one team with the same name. Support experts (מומחי תמיכה) belong to
+// תמיכה טכנית but also cover שירות לקוחות shifts.
 const TEAMS = [
   {
-    key: "t1", department: "support", name: "תמיכה Tier 1", color: 1, size: 28, lead: "lead1",
+    key: "service", name: "שירות לקוחות", color: 1, size: 24, lead: "lead1", expertsHelp: true,
     shifts: [
-      { name: "בוקר", starts: "07:00", ends: "15:00", required: 6, weekdays: WEEKDAYS.all },
-      { name: "אמצע", starts: "10:00", ends: "19:00", required: 3, weekdays: WEEKDAYS.sunThu },
-      { name: "ערב", starts: "15:00", ends: "23:00", required: 5, weekdays: WEEKDAYS.all },
+      { name: "בוקר", starts: "08:00", ends: "16:00", required: 6, weekdays: WEEKDAYS.sunThu },
+      { name: "ערב", starts: "14:00", ends: "22:00", required: 4, weekdays: WEEKDAYS.sunThu },
+      { name: "שישי", starts: "08:00", ends: "14:00", required: 3, weekdays: WEEKDAYS.fri }
+    ]
+  },
+  {
+    key: "tech", name: "תמיכה טכנית", color: 2, size: 18, lead: "lead2", experts: 6, expertsHelp: true,
+    shifts: [
+      { name: "בוקר", starts: "07:00", ends: "15:00", required: 5, weekdays: WEEKDAYS.all },
+      { name: "ערב", starts: "15:00", ends: "23:00", required: 4, weekdays: WEEKDAYS.all },
       { name: "לילה", starts: "23:00", ends: "07:00", required: 2, weekdays: WEEKDAYS.all }
     ]
   },
   {
-    key: "t2", department: "support", name: "תמיכה Tier 2", color: 2, size: 13, lead: "lead2",
-    shifts: [
-      { name: "בוקר", starts: "08:00", ends: "17:00", required: 4, weekdays: WEEKDAYS.sunThu },
-      { name: "ערב", starts: "13:00", ends: "22:00", required: 3, weekdays: WEEKDAYS.sunThu },
-      { name: "סוף שבוע", starts: "09:00", ends: "17:00", required: 2, weekdays: WEEKDAYS.friSat }
-    ]
-  },
-  {
-    key: "s1", department: "sales", name: "מכירות נכנסות", color: 3, size: 16, lead: "lead3",
+    key: "sales", name: "מכירות", color: 3, size: 16, lead: "lead3",
     shifts: [
       { name: "יום", starts: "09:00", ends: "18:00", required: 6, weekdays: WEEKDAYS.sunThu },
-      { name: "מאוחר", starts: "12:00", ends: "21:00", required: 4, weekdays: WEEKDAYS.sunThu },
-      { name: "שישי", starts: "08:00", ends: "13:00", required: 3, weekdays: WEEKDAYS.fri }
-    ]
-  },
-  {
-    key: "s2", department: "sales", name: "מכירות יוצאות", color: 4, size: 11, lead: "lead4",
-    shifts: [
-      { name: "יום", starts: "09:00", ends: "17:00", required: 5, weekdays: WEEKDAYS.sunThu },
-      { name: "אחה״צ", starts: "13:00", ends: "20:00", required: 3, weekdays: WEEKDAYS.sunThu }
+      { name: "מאוחר", starts: "12:00", ends: "21:00", required: 4, weekdays: WEEKDAYS.sunThu }
     ]
   }
 ];
@@ -136,8 +130,8 @@ if (reset) {
 
 const passwordHash = await hashPassword(demoPassword);
 const departments = {};
-for (const [key, name] of [["support", "תמיכה"], ["sales", "מכירות"]]) {
-  departments[key] = (await client.query("INSERT INTO departments (name) VALUES ($1) RETURNING id", [name])).rows[0].id;
+for (const team of TEAMS) {
+  departments[team.key] = (await client.query("INSERT INTO departments (name) VALUES ($1) RETURNING id", [team.name])).rows[0].id;
 }
 
 async function addUser({ username, name, role, department = null, team = null, title = "", min = 24, max = 42 }) {
@@ -151,8 +145,9 @@ async function addUser({ username, name, role, department = null, team = null, t
 
 const users = {};
 users.admin = await addUser({ username: "admin", name: "רונל (מנהל מערכת)", role: "ADMIN", title: "מנהל מערכת" });
-users.support = await addUser({ username: "support", name: "שרון אלמוג", role: "DEPARTMENT_MANAGER", department: departments.support, title: "מנהלת מחלקת תמיכה" });
-users.sales = await addUser({ username: "sales", name: "אלעד ברק", role: "DEPARTMENT_MANAGER", department: departments.sales, title: "מנהל מחלקת מכירות" });
+// Senior managers (מנהלים) see, schedule and approve everything.
+users.manager1 = await addUser({ username: "manager1", name: "שרון אלמוג", role: "SENIOR_MANAGER", title: "מנהלת תפעול" });
+users.manager2 = await addUser({ username: "manager2", name: "אלעד ברק", role: "SENIOR_MANAGER", title: "מנהל שירות ומכירות" });
 
 const teamData = [];
 let nameIndex = 0;
@@ -168,8 +163,9 @@ function nextName() {
   return `${first} ${last}`;
 }
 
+const experts = [];
 for (const team of TEAMS) {
-  const department = departments[team.department];
+  const department = departments[team.key];
   const teamId = (
     await client.query("INSERT INTO teams (department_id, name, color_slot) VALUES ($1, $2, $3) RETURNING id", [department, team.name, team.color])
   ).rows[0].id;
@@ -187,7 +183,7 @@ for (const team of TEAMS) {
   members.push({ id: await addUser({ username: team.lead, name: leadName, role: "TEAM_LEAD", department, team: teamId, title: "ראש צוות", min: 30, max: 45 }), max: 45 * 60 });
   users[team.lead] = members[0].id;
   for (let index = 0; index < team.size; index += 1) {
-    const special = team.key === "t1" && index === 0 ? "noa" : team.key === "s1" && index === 0 ? "dana" : team.key === "t2" && index === 0 ? "yossi" : null;
+    const special = team.key === "service" && index === 0 ? "noa" : team.key === "sales" && index === 0 ? "dana" : team.key === "tech" && index === 0 ? "yossi" : null;
     const partTime = index % 6 === 5;
     const name = special === "noa" ? "נועה כהן" : special === "dana" ? "דנה לוי" : special === "yossi" ? "יוסי מזרחי" : nextName();
     const max = partTime ? 25 : 42;
@@ -206,10 +202,25 @@ for (const team of TEAMS) {
     }
     members.push({ id, max: max * 60 });
   }
+  for (let index = 0; index < (team.experts ?? 0); index += 1) {
+    const id = await addUser({
+      username: `expert${index + 1}`,
+      name: nextName(),
+      role: "EXPERT",
+      department,
+      team: teamId,
+      title: "מומחה תמיכה",
+      min: 30,
+      max: 42
+    });
+    const expert = { id, max: 42 * 60, expert: true };
+    members.push(expert);
+    experts.push(expert);
+  }
   teamData.push({ ...team, teamId, templates, members });
 }
 
-// Per-person extras: a senior agent in Tier 2 can approve requests and see the team's insights.
+// Per-person extras: a senior agent in תמיכה טכנית can approve requests and see the team's insights.
 await client.query(
   "INSERT INTO user_permissions (user_id, permission) VALUES ($1, 'requests.approve'), ($1, 'reports.view')",
   [users.yossi]
@@ -223,9 +234,18 @@ const fillLevels = [0.93, 0.97, 0.9, 0.95, 0.98, 0.96, 0.82];
 const assignments = [];
 
 for (const [weekIndex, weekStart] of weeks.entries()) {
+  // Hours and shifts per person across all teams, so experts working in two teams keep
+  // their rest and weekly limits.
+  const minutes = new Map();
+  const byUser = new Map();
   for (const team of teamData) {
-    const minutes = new Map(team.members.map((member) => [member.id, 0]));
-    const byUser = new Map(team.members.map((member) => [member.id, []]));
+    // Experts from other teams join the candidates of teams they help, after the team's own people.
+    const guests = team.expertsHelp ? experts.filter((expert) => !team.members.includes(expert)) : [];
+    const pool = [...team.members, ...guests];
+    for (const member of pool) {
+      if (!minutes.has(member.id)) minutes.set(member.id, 0);
+      if (!byUser.has(member.id)) byUser.set(member.id, []);
+    }
     for (let day = 0; day < 7; day += 1) {
       const date = addDays(weekStart, day);
       for (const template of [...team.templates].sort((a, b) => a.starts.localeCompare(b.starts))) {
@@ -235,14 +255,18 @@ for (const [weekIndex, weekStart] of weeks.entries()) {
         const target = Math.round(template.required * Math.min(1, fillLevels[weekIndex] + (random() - 0.5) * 0.25));
         const start = day * 1440 + toMinutes(template.starts);
         const end = start + template.minutes;
-        const candidates = team.members
+        const candidates = pool
           .filter((member) => {
             const own = byUser.get(member.id);
             if (own.some((shift) => shift.day === day)) return false;
             if (own.some((shift) => !(shift.end + 8 * 60 <= start || end + 8 * 60 <= shift.start))) return false;
             return minutes.get(member.id) + template.minutes <= member.max;
           })
-          .sort((a, b) => minutes.get(a.id) - minutes.get(b.id) || random() - 0.5);
+          .sort(
+            (a, b) =>
+              minutes.get(a.id) + (guests.includes(a) ? 4 * 60 : 0) - (minutes.get(b.id) + (guests.includes(b) ? 4 * 60 : 0)) ||
+              random() - 0.5
+          );
         for (const member of candidates.slice(0, target)) {
           byUser.get(member.id).push({ day, start, end });
           minutes.set(member.id, minutes.get(member.id) + template.minutes);
@@ -262,10 +286,10 @@ for (let index = 0; index < assignments.length; index += 500) {
   );
 }
 
-// This week is published for every team; next week only for the sales teams.
+// This week is published for every team; next week only for sales.
 for (const team of teamData) {
   await client.query("INSERT INTO published_weeks (team_id, week_start, published_by) VALUES ($1, $2, $3)", [team.teamId, thisWeek, users.admin]);
-  if (team.department === "sales") {
+  if (team.key === "sales") {
     await client.query("INSERT INTO published_weeks (team_id, week_start, published_by) VALUES ($1, $2, $3)", [team.teamId, addDays(thisWeek, 7), users.admin]);
   }
 }
@@ -307,24 +331,24 @@ function label(shift) {
   return `${DAY_NAMES[dayIndex(shift.work_date)]} ${day}.${month} · ${shift.shift_name} ${shift.starts_at.slice(0, 5)}-${shift.ends_at.slice(0, 5)}`;
 }
 
-const tier1 = teamData.find((team) => team.key === "t1");
-const swapper = tier1.members[3].id;
+const service = teamData.find((team) => team.key === "service");
+const swapper = service.members[3].id;
 const swapShift = await futureShiftOf(swapper);
 if (swapShift) {
   await client.query(
     `INSERT INTO swap_requests (requester_assignment_id, requester_id, target_user_id, team_id, shift_label)
      VALUES ($1, $2, $3, $4, $5)`,
-    [swapShift.id, swapper, users.noa, tier1.teamId, label(swapShift)]
+    [swapShift.id, swapper, users.noa, service.teamId, label(swapShift)]
   );
 }
-const giver = tier1.members[5].id;
+const giver = service.members[5].id;
 const giveShift = await futureShiftOf(giver);
 if (giveShift) {
-  await client.query("INSERT INTO shift_giveaways (assignment_id, offered_by, team_id) VALUES ($1, $2, $3)", [giveShift.id, giver, tier1.teamId]);
+  await client.query("INSERT INTO shift_giveaways (assignment_id, offered_by, team_id) VALUES ($1, $2, $3)", [giveShift.id, giver, service.teamId]);
 }
 await client.query(
   "INSERT INTO vacation_requests (user_id, start_date, end_date, note) VALUES ($1, $2, $3, 'חתונה של אח שלי')",
-  [tier1.members[7].id, addDays(openWeek, 2), addDays(openWeek, 4)]
+  [service.members[7].id, addDays(openWeek, 2), addDays(openWeek, 4)]
 );
 await client.query(
   "INSERT INTO notifications (user_id, title, body, link) VALUES ($1, $2, $3, '/schedule')",
@@ -333,4 +357,8 @@ await client.query(
 
 await client.end();
 console.log(`Seeded ${teamData.reduce((sum, team) => sum + team.members.length, 0) + 3} people, ${assignments.length} shifts.`);
-console.log(`Sign in with admin / support / sales / lead1-lead4 / noa / dana / yossi and password ${demoPassword === "LocalOnly123!" ? "LocalOnly123!" : "(DEMO_PASSWORD)"}.`);
+console.log(
+  `Sign in with admin / manager1 / manager2 / lead1-lead3 / expert1-expert6 / noa / dana / yossi and password ${
+    demoPassword === "LocalOnly123!" ? "LocalOnly123!" : "(DEMO_PASSWORD)"
+  }.`
+);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { addDays, getScheduleTimeParts } from "@/lib/dates";
-import { teamsWithPermission } from "@/lib/permissions";
+import { isSchedulable, teamsWithPermission } from "@/lib/permissions";
 import { asActor, loadOrg } from "@/server/access";
 import { isApiError, requireApiUser } from "@/server/api";
 import { listShiftTemplates } from "@/server/org";
@@ -40,7 +40,7 @@ export async function GET() {
     vacations,
     myShifts,
     teammates: teammates
-      .filter((person) => person.id !== user.id && (person.role === "EMPLOYEE" || person.role === "TEAM_LEAD"))
+      .filter((person) => person.id !== user.id && isSchedulable(person.role))
       .map((person) => ({ id: person.id, name: person.name })),
     teammateShifts: teamAssignments
       .filter((assignment) => assignment.userId !== user.id)

@@ -26,14 +26,14 @@ test("a team lead auto-fills, edits and publishes a week; the team is notified",
     await expect(lead.locator(".toast")).toContainText("שובץ/ה");
     await lead.keyboard.press("Escape");
 
-    // Publish: Noa (a Tier 1 member) gets a notification about this week.
+    // Publish: Noa (a שירות לקוחות member) gets a notification about this week.
     await lead.getByRole("button", { name: /פרסום השבוע|שליחת עדכון/ }).click();
     await lead.getByRole("dialog").getByRole("button", { name: /פרסום ושליחה|שליחת עדכון/ }).click();
     await expect(lead.locator(".toast")).toContainText("אנשי צוות");
     await expect(lead.locator(".badge", { hasText: "פורסם" })).toBeVisible();
 
     const { body } = await call<{ notifications: { title: string; link: string }[] }>(noa, "/api/notifications");
-    expect(body.notifications.some((item) => item.title.includes("תמיכה Tier 1") && item.link.includes(`week=${week}`))).toBe(true);
+    expect(body.notifications.some((item) => item.title.includes("שירות לקוחות") && item.link.includes(`week=${week}`))).toBe(true);
   } finally {
     await lead.context().close();
     await noa.context().close();
@@ -45,7 +45,7 @@ test("scheduling someone on their day off needs confirmation", async ({ browser 
   const lead = await signIn(browser, "lead1");
   const noa = await signIn(browser, "noa");
   try {
-    const { shifts } = await teamByName(lead, "תמיכה Tier 1");
+    const { shifts } = await teamByName(lead, "שירות לקוחות");
     const morning = shifts.find((shift) => shift.name === "בוקר")!;
     const date = addDays(week, 1);
     expect((await call(noa, "/api/availability", "PUT", { workDate: date, shiftTemplateId: null, status: "TIME_OFF" })).status).toBe(200);
@@ -73,8 +73,8 @@ test("scheduling someone on their day off needs confirmation", async ({ browser 
     expect(confirmed.status).toBe(201);
 
     // The same person can't work an overlapping shift.
-    const middle = shifts.find((shift) => shift.name === "אמצע")!;
-    const overlap = await call(lead, "/api/assignments", "POST", { userId: me.body.user.id, shiftTemplateId: middle.id, workDate: date, acknowledgeWarnings: true });
+    const evening = shifts.find((shift) => shift.name === "ערב")!;
+    const overlap = await call(lead, "/api/assignments", "POST", { userId: me.body.user.id, shiftTemplateId: evening.id, workDate: date, acknowledgeWarnings: true });
     expect(overlap.status).toBe(422);
   } finally {
     await lead.context().close();

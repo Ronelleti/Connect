@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { addDays, isSundayDateOnly } from "@/lib/dates";
-import { can } from "@/lib/permissions";
+import { can, isSchedulable } from "@/lib/permissions";
 import { buildSchedulePublishedMessage } from "@/lib/schedulePublish";
 import { asActor } from "@/server/access";
 import { forbidden, isApiError, isUuid, jsonError, readJson, requireApiUser } from "@/server/api";
@@ -27,12 +27,17 @@ export async function POST(request: Request) {
   const weekStart = body.weekStart;
   const { publishedAt, wasPublished } = await recordPublishedWeek(team.id, weekStart, user.id);
   const [members, assignments, templates] = await Promise.all([
-    listPeople({ teamIds: [team.id] }),
+    listPeople({}),
     listTeamAssignments([team.id], weekStart, addDays(weekStart, 7)),
     listShiftTemplates([team.id], true)
   ]);
   const names = new Map(templates.map((template) => [template.id, template.name]));
-  const recipients = members.filter((member) => member.role === "EMPLOYEE" || member.role === "TEAM_LEAD");
+  // The team's members, plus experts from other teams who have shifts in it this week.
+  const recipients = members.filter(
+    (member) =>
+      (member.teamId === team.id && isSchedulable(member.role)) ||
+      (member.role === "EXPERT" && assignments.some((assignment) => assignment.userId === member.id))
+  );
   await Promise.all(
     recipients.map((member) =>
       notifyUsers(

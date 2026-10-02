@@ -18,7 +18,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     return jsonError("הקובץ לא נמצא.", 404);
   }
 
-  if (file.uploadedByUserId !== user.id && user.role !== "ADMIN" && user.role !== "DEPARTMENT_MANAGER") {
+  if (file.uploadedByUserId !== user.id && !["ADMIN", "SENIOR_MANAGER", "DEPARTMENT_MANAGER"].includes(user.role)) {
     return jsonError("אין לך הרשאה למחוק קובץ זה.", 403);
   }
 

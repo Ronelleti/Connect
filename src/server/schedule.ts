@@ -187,7 +187,7 @@ export async function isAvailabilitySubmitted(userId: string, weekStart: string)
 export async function listUserIdsMissingAvailability(weekStart: string) {
   const rows = await query<{ id: string }>(
     `SELECT id FROM users
-     WHERE is_active AND team_id IS NOT NULL AND role IN ('EMPLOYEE', 'TEAM_LEAD')
+     WHERE is_active AND team_id IS NOT NULL AND role IN ('EMPLOYEE', 'EXPERT', 'TEAM_LEAD')
        AND id NOT IN (SELECT user_id FROM availability_submissions WHERE week_start = $1)`,
     [weekStart]
   );

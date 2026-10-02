@@ -61,7 +61,7 @@ export async function GET() {
   if (user.teamId) {
     const [teamShifts, members, published] = await Promise.all([
       listTeamAssignments([user.teamId], addDays(today, -1), addDays(today, 1)),
-      listPeople({ teamIds: [user.teamId] }),
+      listPeople({}),
       listPublishedWeeks([user.teamId], weekStart)
     ]);
     const names = new Map(members.map((member) => [member.id, member.name]));

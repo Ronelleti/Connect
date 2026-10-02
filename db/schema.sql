@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'EMPLOYEE'
-    CHECK (role IN ('ADMIN', 'DEPARTMENT_MANAGER', 'TEAM_LEAD', 'EMPLOYEE')),
+    CHECK (role IN ('ADMIN', 'SENIOR_MANAGER', 'DEPARTMENT_MANAGER', 'TEAM_LEAD', 'EXPERT', 'EMPLOYEE')),
   department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
   team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
   title TEXT NOT NULL DEFAULT '',
@@ -226,3 +226,10 @@ CREATE TABLE IF NOT EXISTS shared_files (
   data BYTEA NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+
+-- Senior managers (everything, without admin-only settings) and support experts (a home
+-- team, but can be scheduled into any team).
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('ADMIN', 'SENIOR_MANAGER', 'DEPARTMENT_MANAGER', 'TEAM_LEAD', 'EXPERT', 'EMPLOYEE'));

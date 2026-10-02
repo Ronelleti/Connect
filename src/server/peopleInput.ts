@@ -1,4 +1,4 @@
-import { isPermission, isRole, type Permission, type Role } from "@/lib/permissions";
+import { belongsToTeam, isPermission, isRole, type Permission, type Role } from "@/lib/permissions";
 import type { Department, Team } from "@/lib/types";
 import { isUuid } from "./api";
 import { cleanName } from "./validation";
@@ -82,9 +82,9 @@ export function parsePersonBody(body: Record<string, unknown>): { value: ParsedP
 }
 
 /**
- * Settles department/team for the role: team members (team lead, employee) need a team and
- * take its department; a department manager needs a department and has no team; an admin
- * may have neither.
+ * Settles department/team for the role: team members (team lead, expert, employee) need a
+ * team and take its department; a department manager needs a department and has no team;
+ * senior managers and admins have neither.
  */
 export function resolvePlacement(
   role: Role,
@@ -93,7 +93,7 @@ export function resolvePlacement(
   departments: Department[],
   teams: Team[]
 ): { departmentId: string | null; teamId: string | null; error: string | null } {
-  if (role === "TEAM_LEAD" || role === "EMPLOYEE") {
+  if (belongsToTeam(role)) {
     const team = teams.find((candidate) => candidate.id === teamId);
     if (!team) {
       return { departmentId, teamId, error: "יש לבחור צוות." };
@@ -105,6 +105,9 @@ export function resolvePlacement(
       return { departmentId, teamId, error: "יש לבחור מחלקה." };
     }
     return { departmentId, teamId: null, error: null };
+  }
+  if (role === "SENIOR_MANAGER") {
+    return { departmentId: null, teamId: null, error: null };
   }
   const team = teams.find((candidate) => candidate.id === teamId);
   return { departmentId: team?.departmentId ?? departmentId ?? null, teamId: team?.id ?? null, error: null };

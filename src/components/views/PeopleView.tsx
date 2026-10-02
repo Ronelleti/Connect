@@ -3,7 +3,7 @@
 import { Pencil, Search, ShieldCheck, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
-import { PERMISSION_LABELS, PERMISSIONS, ROLE_DEFAULTS, ROLE_LABELS, type Permission, type Role } from "@/lib/permissions";
+import { belongsToTeam, PERMISSION_LABELS, PERMISSIONS, ROLE_DEFAULTS, ROLE_LABELS, seesEverything, type Permission, type Role } from "@/lib/permissions";
 import type { Department, Person, Team } from "@/lib/types";
 import { AppShell, type ShellProps } from "../shell/AppShell";
 import { Avatar, TeamDot } from "../ui/Avatar";
@@ -19,7 +19,14 @@ interface PeopleData {
   canEditPermissions: boolean;
 }
 
-const ROLE_TONE: Record<Role, string> = { ADMIN: "critical", DEPARTMENT_MANAGER: "accent", TEAM_LEAD: "warning", EMPLOYEE: "" };
+const ROLE_TONE: Record<Role, string> = {
+  ADMIN: "critical",
+  SENIOR_MANAGER: "critical",
+  DEPARTMENT_MANAGER: "accent",
+  TEAM_LEAD: "warning",
+  EXPERT: "good",
+  EMPLOYEE: ""
+};
 
 export function PeopleView(shell: ShellProps) {
   const [data, setData] = useState<PeopleData | null>(null);
@@ -52,7 +59,7 @@ export function PeopleView(shell: ShellProps) {
       (teamFilter === "all" || person.teamId === teamFilter || (teamFilter === "none" && !person.teamId)) &&
       (person.name.includes(search.trim()) || person.email.includes(search.trim().toLowerCase()))
   );
-  const canAdd = (data?.assignableRoles.length ?? 0) > 0 && ((data?.manageableTeamIds.length ?? 0) > 0 || shell.user.role === "ADMIN" || shell.user.role === "DEPARTMENT_MANAGER");
+  const canAdd = (data?.assignableRoles.length ?? 0) > 0 && ((data?.manageableTeamIds.length ?? 0) > 0 || seesEverything(shell.user.role) || shell.user.role === "DEPARTMENT_MANAGER");
   const counts = new Map<string, number>();
   for (const person of data?.people ?? []) {
     counts.set(person.teamId ?? "none", (counts.get(person.teamId ?? "none") ?? 0) + 1);
@@ -180,7 +187,7 @@ function PersonDialog({
   onSaved: (message: string) => void;
 }) {
   const roles = data.assignableRoles.includes(person?.role ?? "EMPLOYEE") || !person ? data.assignableRoles : [person.role, ...data.assignableRoles];
-  const manageableTeams = actorRole === "ADMIN" ? teams : teams.filter((team) => data.manageableTeamIds.includes(team.id));
+  const manageableTeams = seesEverything(actorRole) ? teams : teams.filter((team) => data.manageableTeamIds.includes(team.id));
   const [form, setForm] = useState({
     name: person?.name ?? "",
     email: person?.email ?? "",
@@ -197,7 +204,7 @@ function PersonDialog({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const update = (patch: Partial<typeof form>) => setForm((current) => ({ ...current, ...patch }));
-  const needsTeam = form.role === "TEAM_LEAD" || form.role === "EMPLOYEE";
+  const needsTeam = belongsToTeam(form.role);
   const needsDepartment = form.role === "DEPARTMENT_MANAGER";
 
   async function save(event: React.FormEvent) {
@@ -208,7 +215,7 @@ function PersonDialog({
       name: form.name,
       email: form.email,
       role: form.role,
-      teamId: needsTeam ? form.teamId : form.role === "ADMIN" ? null : null,
+      teamId: needsTeam ? form.teamId : null,
       departmentId: needsDepartment ? form.departmentId : null,
       title: form.title,
       weeklyMinHours: Number(form.weeklyMinHours),
@@ -265,7 +272,7 @@ function PersonDialog({
             מחלקה
             <select value={form.departmentId} onChange={(event) => update({ departmentId: event.target.value })} required>
               {departments
-                .filter((department) => actorRole === "ADMIN" || department.id === actorDepartmentId)
+                .filter((department) => seesEverything(actorRole) || department.id === actorDepartmentId)
                 .map((department) => (
                   <option key={department.id} value={department.id}>
                     {department.name}

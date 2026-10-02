@@ -24,7 +24,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   let updated = null;
 
   if (action === "take") {
-    if (user.teamId !== team.id || giveaway.offeredBy === user.id) {
+    if ((user.teamId !== team.id && user.role !== "EXPERT") || giveaway.offeredBy === user.id) {
       return forbidden("אפשר לקחת רק משמרת של עמית/ה מהצוות שלך.");
     }
     const [assignment, me] = await Promise.all([findAssignment(giveaway.assignmentId), findPerson(user.id)]);

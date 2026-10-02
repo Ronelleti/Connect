@@ -38,11 +38,18 @@ export async function GET(request: Request) {
     weekStart,
     team,
     templates: week.templates,
-    members: week.members.map((member) => ({
+    // The team's members, then experts from other teams (homeTeamName set) who can also
+    // work here. Employees only see guests who are actually on this team's shifts.
+    members: [
+      ...week.members,
+      ...week.guests.filter((guest) => canEdit || week.teamAssignments.some((assignment) => assignment.userId === guest.id))
+    ].map((member) => ({
       id: member.id,
       name: member.name,
       role: member.role,
       title: member.title,
+      homeTeamName: member.teamId === team.id ? null : (teams.find((option) => option.id === member.teamId)?.name ?? null),
+      homeTeamColorSlot: member.teamId === team.id ? null : (teams.find((option) => option.id === member.teamId)?.colorSlot ?? null),
       weeklyMinHours: canEdit ? member.weeklyMinHours : 0,
       weeklyMaxHours: canEdit ? member.weeklyMaxHours : 0
     })),

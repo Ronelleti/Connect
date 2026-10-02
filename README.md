@@ -44,9 +44,17 @@ permissions for one person. A permission only applies inside the person's scope.
 | Role | Scope | Default permissions |
 | --- | --- | --- |
 | Admin (מנהל מערכת) | Everything | All, plus departments, teams and per-person permissions |
+| Senior manager (מנהל/ת) | Every team | All seven below (not departments/teams or per-person permissions) |
 | Department manager (מנהל מחלקה) | Their department's teams | All seven below |
 | Team lead (ראש צוות) | Their team | Edit schedule, publish, approve requests, view insights |
+| Support expert (מומחה תמיכה) | Home team; sees every team | None; can be scheduled into any team's shifts |
 | Employee (עובד/ת) | Their team | None (own schedule, availability, requests) |
+
+Support experts belong to a home team (where they fill in availability and request
+vacations) but appear in every team's shift picker under "מומחים מצוותים אחרים", can be
+swapped with and can take giveaways in any team, and are notified when a team they work in
+publishes its week. Rest, overlap and weekly-hour rules count their shifts in all teams.
+Auto-fill only uses a team's own people; experts from other teams are added by hand.
 
 Permissions: `schedule.edit`, `schedule.publish`, `requests.approve`, `reports.view`,
 `shifts.configure`, `people.manage`, `department.view` (see the whole department's
@@ -78,19 +86,20 @@ npm run db:seed
 npm run build && npm start      # or: npm run dev
 ```
 
-The database scripts read `.env` themselves. `npm run db:seed` loads a demo (2 departments,
-4 teams, ~75 people, six weeks of schedules, availability and open requests) into an empty
-database; `npm run db:seed -- --reset` wipes all data first. It refuses to run in
+The database scripts read `.env` themselves. `npm run db:seed` loads a demo (שירות לקוחות,
+תמיכה טכנית and מכירות, one team each; ~70 people including support experts; six weeks of
+schedules, availability and open requests) into an empty database; `npm run db:seed -- --reset` wipes all data first. It refuses to run in
 production. Everyone signs in with `DEMO_PASSWORD` (default `LocalOnly123!`); usernames
 without `@` work at the login screen:
 
 | Username | Who |
 | --- | --- |
 | `admin` | Admin |
-| `support`, `sales` | Department managers |
-| `lead1`-`lead4` | Team leads (Tier 1, Tier 2, inbound sales, outbound sales) |
-| `noa`, `dana` | Employees (Tier 1, inbound sales) |
-| `yossi` | Tier 2 employee with extra permissions (approve requests, view insights) |
+| `manager1`, `manager2` | Senior managers |
+| `lead1`, `lead2`, `lead3` | Team leads (שירות לקוחות, תמיכה טכנית, מכירות) |
+| `expert1`-`expert6` | Support experts (home team תמיכה טכנית, also work in שירות לקוחות) |
+| `noa`, `dana` | Employees (שירות לקוחות, מכירות) |
+| `yossi` | תמיכה טכנית employee with extra permissions (approve requests, view insights) |
 
 To try it on a phone, phones need https: run `npx cloudflared tunnel --protocol http2 --url http://localhost:3000`
 and open the printed `https://….trycloudflare.com` address.
@@ -110,8 +119,7 @@ run again without reseeding.
 ## Netlify deployment
 
 Deploy this branch as **its own Netlify site with its own database**. Its schema
-(`netlify/database/migrations/20261002000100_support_sales_schema.sql`, same as
-`db/schema.sql`) is not compatible with the NOC app's database.
+(the SQL files in `netlify/database/migrations/`, combined in `db/schema.sql`) is not compatible with the NOC app's database.
 
 1. Create a Netlify project from this repository and set the production branch to `SupportSales`.
 2. Under **Database**, initialize Netlify Database (or `netlify database init --yes`).

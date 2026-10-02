@@ -28,7 +28,8 @@ export async function POST(request: Request) {
   if (!can(asActor(user), "schedule.edit", team)) {
     return forbidden();
   }
-  if (person.teamId !== team.id) {
+  // Team members, plus experts from any team, can be scheduled here.
+  if (person.teamId !== team.id && person.role !== "EXPERT") {
     return jsonError(`${person.name} לא שייך/ת לצוות ${team.name}.`);
   }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { addDays, getSundayWeekStart, isSundayDateOnly } from "@/lib/dates";
 import { buildInsights, TREND_WEEKS } from "@/lib/insights";
-import { teamsWithPermission } from "@/lib/permissions";
+import { isSchedulable, teamsWithPermission } from "@/lib/permissions";
 import { asActor, loadOrg } from "@/server/access";
 import { forbidden, isApiError, jsonError, requireApiUser } from "@/server/api";
 import { query } from "@/server/db";
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
   const [templates, assignments, members, pending] = await Promise.all([
     listShiftTemplates(teamIds, true),
     listTeamAssignments(teamIds, addDays(weekStart, -7 * (TREND_WEEKS - 1) - 1), weekEnd),
-    listPeople({ teamIds }),
+    listPeople({}),
     query<{ swaps: number; giveaways: number; vacations: number }>(
       `SELECT
          (SELECT count(*)::int FROM swap_requests WHERE team_id = ANY($1::uuid[]) AND status = 'PENDING_MANAGER') AS swaps,
@@ -46,7 +46,12 @@ export async function GET(request: Request) {
       [teamIds]
     )
   ]);
-  const schedulable = members.filter((member) => member.role === "EMPLOYEE" || member.role === "TEAM_LEAD");
+  // The teams' own people, plus experts from other teams who worked in them this week.
+  const workedHere = new Set(assignments.filter((assignment) => assignment.workDate >= weekStart).map((assignment) => assignment.userId));
+  const schedulable = members.filter(
+    (member) =>
+      isSchedulable(member.role) && ((member.teamId !== null && teamIds.includes(member.teamId)) || (member.role === "EXPERT" && workedHere.has(member.id)))
+  );
   const timeOff = await listAvailability(schedulable.map((member) => member.id), weekStart, weekEnd);
   const insights = buildInsights({
     weekStart,

@@ -55,7 +55,7 @@ describe("permissions", () => {
 
   it("never lets someone manage people at or above their own role", () => {
     const manager = actor({ role: "DEPARTMENT_MANAGER", teamId: null });
-    expect(assignableRoles(manager)).toEqual(["TEAM_LEAD", "EMPLOYEE"]);
+    expect(assignableRoles(manager)).toEqual(["TEAM_LEAD", "EXPERT", "EMPLOYEE"]);
     const lead = { id: "x", role: "TEAM_LEAD" as const, departmentId: "d-support", teamId: support2.id };
     expect(canManagePerson(manager, lead, teams)).toBe(true);
     expect(canManagePerson(manager, { ...lead, role: "DEPARTMENT_MANAGER" }, teams)).toBe(false);
@@ -66,5 +66,23 @@ describe("permissions", () => {
     expect(canManagePerson(leadWithPeople, employee, teams)).toBe(true);
     expect(canManagePerson(leadWithPeople, { ...employee, teamId: support2.id }, teams)).toBe(false);
     expect(canManagePerson(actor({ role: "TEAM_LEAD" }), employee, teams)).toBe(false);
+  });
+
+  it("gives senior managers everything except admin-only settings", () => {
+    const senior = actor({ role: "SENIOR_MANAGER", departmentId: null, teamId: null });
+    expect(can(senior, "requests.approve", sales1)).toBe(true);
+    expect(can(senior, "schedule.edit", support2)).toBe(true);
+    expect(visibleTeams(senior, teams)).toHaveLength(3);
+    expect(canEditPermissions(senior)).toBe(false);
+    expect(assignableRoles(senior)).toEqual(["DEPARTMENT_MANAGER", "TEAM_LEAD", "EXPERT", "EMPLOYEE"]);
+    expect(canManagePerson(senior, { id: "m", role: "DEPARTMENT_MANAGER", departmentId: "d-sales", teamId: null }, teams)).toBe(true);
+    expect(canManagePerson(senior, { id: "s", role: "SENIOR_MANAGER", departmentId: null, teamId: null }, teams)).toBe(false);
+  });
+
+  it("lets experts see every team without managing any", () => {
+    const expert = actor({ role: "EXPERT" });
+    expect(visibleTeams(expert, teams)).toHaveLength(3);
+    expect(can(expert, "schedule.edit", support1)).toBe(false);
+    expect(assignableRoles(actor({ role: "TEAM_LEAD" }))).toEqual(["EXPERT", "EMPLOYEE"]);
   });
 });

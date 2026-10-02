@@ -162,7 +162,7 @@ export function FilesLibrary(shell: ShellProps) {
                       <a className="icon-button" href={`/api/files/${file.id}/download`} title="הורדה">
                         <Download size={16} />
                       </a>
-                      {file.uploadedByUserId === currentUser.id || (currentUser.role === "ADMIN" || currentUser.role === "DEPARTMENT_MANAGER") ? (
+                      {file.uploadedByUserId === currentUser.id || ["ADMIN", "SENIOR_MANAGER", "DEPARTMENT_MANAGER"].includes(currentUser.role) ? (
                         <button
                           className="icon-button"
                           title="מחיקה"

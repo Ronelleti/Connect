@@ -1,9 +1,10 @@
 // Who can do what. Everyone has a role with default permissions; an admin can switch on
 // extra permissions for one person. A permission only applies to the teams in the
-// person's scope: everything for an admin, their department for a department manager,
-// and their own team for everyone else.
+// person's scope: everything for an admin or a senior manager, their department for a
+// department manager, and their own team for everyone else. Experts belong to a home
+// team but can be scheduled into, and see, every team.
 
-export const ROLES = ["ADMIN", "DEPARTMENT_MANAGER", "TEAM_LEAD", "EMPLOYEE"] as const;
+export const ROLES = ["ADMIN", "SENIOR_MANAGER", "DEPARTMENT_MANAGER", "TEAM_LEAD", "EXPERT", "EMPLOYEE"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
@@ -19,8 +20,10 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "מנהל מערכת",
+  SENIOR_MANAGER: "מנהל/ת",
   DEPARTMENT_MANAGER: "מנהל מחלקה",
   TEAM_LEAD: "ראש צוות",
+  EXPERT: "מומחה תמיכה",
   EMPLOYEE: "עובד/ת"
 };
 
@@ -36,13 +39,37 @@ export const PERMISSION_LABELS: Record<Permission, { label: string; description:
 
 export const ROLE_DEFAULTS: Record<Role, readonly Permission[]> = {
   ADMIN: PERMISSIONS,
+  SENIOR_MANAGER: PERMISSIONS,
   DEPARTMENT_MANAGER: PERMISSIONS,
   TEAM_LEAD: ["schedule.edit", "schedule.publish", "requests.approve", "reports.view"],
+  EXPERT: [],
   EMPLOYEE: []
 };
 
 /** Higher number = more authority. Used so nobody creates or edits someone above them. */
-const ROLE_RANK: Record<Role, number> = { ADMIN: 3, DEPARTMENT_MANAGER: 2, TEAM_LEAD: 1, EMPLOYEE: 0 };
+const ROLE_RANK: Record<Role, number> = {
+  ADMIN: 5,
+  SENIOR_MANAGER: 4,
+  DEPARTMENT_MANAGER: 3,
+  TEAM_LEAD: 2,
+  EXPERT: 1,
+  EMPLOYEE: 0
+};
+
+/** Roles that work shifts. */
+export function isSchedulable(role: Role): boolean {
+  return role === "EMPLOYEE" || role === "EXPERT" || role === "TEAM_LEAD";
+}
+
+/** Roles that belong to a team (and take its department). */
+export function belongsToTeam(role: Role): boolean {
+  return isSchedulable(role);
+}
+
+/** Roles whose scope is every team. */
+export function seesEverything(role: Role): boolean {
+  return role === "ADMIN" || role === "SENIOR_MANAGER";
+}
 
 export interface Actor {
   id: string;
@@ -75,7 +102,7 @@ export function hasPermission(actor: Actor, permission: Permission): boolean {
 
 /** Whether the team is inside the actor's management scope (ignores permissions). */
 export function isInScope(actor: Actor, team: TeamRef): boolean {
-  if (actor.role === "ADMIN") {
+  if (seesEverything(actor.role)) {
     return true;
   }
   if (actor.role === "DEPARTMENT_MANAGER") {
@@ -89,11 +116,12 @@ export function can(actor: Actor, permission: Permission, team: TeamRef): boolea
   return hasPermission(actor, permission) && isInScope(actor, team);
 }
 
-/** Teams whose schedule the actor may see. */
+/** Teams whose schedule the actor may see. Experts work across teams, so they see all of them. */
 export function visibleTeams<T extends TeamRef>(actor: Actor, teams: T[]): T[] {
   return teams.filter(
     (team) =>
       isInScope(actor, team) ||
+      actor.role === "EXPERT" ||
       (hasPermission(actor, "department.view") &&
         actor.departmentId !== null &&
         team.departmentId === actor.departmentId)
@@ -135,7 +163,11 @@ export function canManagePerson(
   if (team) {
     return isInScope(actor, team);
   }
-  // Someone without a team: a department manager may manage them inside their department.
+  // Someone without a team (a manager): senior managers may manage them anywhere, a
+  // department manager only inside their department.
+  if (actor.role === "SENIOR_MANAGER") {
+    return true;
+  }
   return actor.role === "DEPARTMENT_MANAGER" && person.departmentId === actor.departmentId;
 }
 

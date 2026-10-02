@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assignableRoles, canEditPermissions, canManagePerson, teamsWithPermission, visibleTeams } from "@/lib/permissions";
+import { assignableRoles, canEditPermissions, canManagePerson, seesEverything, teamsWithPermission, visibleTeams } from "@/lib/permissions";
 import { asActor, loadOrg } from "@/server/access";
 import { forbidden, isApiError, jsonError, readJson, requireApiUser } from "@/server/api";
 import { hashPassword } from "@/server/password";
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     user.role === "DEPARTMENT_MANAGER" && user.departmentId ? [user.departmentId] : [];
 
   const people =
-    user.role === "ADMIN"
+    seesEverything(user.role)
       ? await listPeople({ includeInactive })
       : await listPeople({ teamIds: visibleTeamIds, departmentIds: managedDepartmentIds, includeInactive });
 

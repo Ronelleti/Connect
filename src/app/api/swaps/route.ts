@@ -24,7 +24,8 @@ export async function POST(request: Request) {
     return jsonError("אפשר להציע להחלפה רק משמרת עתידית שלך.");
   }
   const target = await findPerson(body.targetUserId);
-  if (!target || !target.isActive || target.id === user.id || target.teamId !== mine.teamId) {
+  // Swaps stay within the shift's team; experts from other teams can join them too.
+  if (!target || !target.isActive || target.id === user.id || (target.teamId !== mine.teamId && target.role !== "EXPERT")) {
     return jsonError("אפשר להחליף רק עם עמית/ה מאותו צוות.");
   }
   const theirs = isUuid(body.targetAssignmentId) ? await findAssignment(body.targetAssignmentId) : null;

@@ -33,6 +33,9 @@ interface Member {
   name: string;
   role: Role;
   title: string;
+  /** Set for experts from another team who can also work here. */
+  homeTeamName: string | null;
+  homeTeamColorSlot: number | null;
   weeklyMinHours: number;
   weeklyMaxHours: number;
 }
@@ -240,7 +243,12 @@ export function ScheduleView({
     URL.revokeObjectURL(url);
   }
 
-  const filteredMembers = (data?.members ?? []).filter((member) => member.name.includes(search.trim()));
+  // The team, plus experts from other teams who have shifts here this week.
+  const filteredMembers = (data?.members ?? []).filter(
+    (member) =>
+      member.name.includes(search.trim()) &&
+      (member.homeTeamName === null || data?.assignments.some((assignment) => assignment.userId === member.id))
+  );
   const team = data?.team;
 
   const toolbar = (
@@ -474,10 +482,18 @@ export function ScheduleView({
                       <div key={member.id} role="row" style={{ display: "contents" }}>
                         <div className="planner-rowhead" role="rowheader">
                           <strong>
-                            <Avatar name={member.name} colorSlot={team?.colorSlot} size="sm" />
+                            <Avatar name={member.name} colorSlot={member.homeTeamColorSlot ?? team?.colorSlot} size="sm" />
                             {member.name}
                           </strong>
-                          <span>{member.role === "TEAM_LEAD" ? "ראש צוות" : member.title}</span>
+                          <span>
+                            {member.homeTeamName
+                              ? `מומחה תמיכה · ${member.homeTeamName}`
+                              : member.role === "TEAM_LEAD"
+                                ? "ראש צוות"
+                                : member.role === "EXPERT"
+                                  ? "מומחה תמיכה"
+                                  : member.title}
+                          </span>
                         </div>
                         {days.map((date) => {
                           const own = data.assignments.filter((assignment) => assignment.userId === member.id && assignment.workDate === date);
@@ -696,11 +712,14 @@ function ShiftPicker({
     })
     .sort((left, right) => left.rank - right.rank || left.hours - right.hours || left.member.name.localeCompare(right.member.name, "he"));
 
+  const own = candidates.filter((item) => item.member.homeTeamName === null);
+  const guests = candidates.filter((item) => item.member.homeTeamName !== null);
   const groups: { title: string; items: typeof candidates }[] = [
-    { title: "מעדיפים את המשמרת", items: candidates.filter((item) => item.rank === 0) },
-    { title: "זמינים", items: candidates.filter((item) => item.rank === 1) },
-    { title: "דורש אישור", items: candidates.filter((item) => item.rank === 2) },
-    { title: "לא ניתן לשבץ", items: candidates.filter((item) => item.rank === 3) }
+    { title: "מעדיפים את המשמרת", items: own.filter((item) => item.rank === 0) },
+    { title: "זמינים", items: own.filter((item) => item.rank === 1) },
+    { title: "דורש אישור", items: own.filter((item) => item.rank === 2) },
+    { title: "מומחים מצוותים אחרים", items: guests.filter((item) => item.rank < 3) },
+    { title: "לא ניתן לשבץ", items: [...own, ...guests].filter((item) => item.rank === 3) }
   ];
 
   return (
@@ -755,7 +774,7 @@ function ShiftPicker({
                       disabled={busy || validation.errors.length > 0}
                       onClick={() => onAssign(member.id)}
                     >
-                      <Avatar name={member.name} colorSlot={data.team.colorSlot} size="sm" />
+                      <Avatar name={member.name} colorSlot={member.homeTeamColorSlot ?? data.team.colorSlot} size="sm" />
                       <div>
                         <strong>{member.name}</strong>
                         {reason ? (
@@ -763,7 +782,13 @@ function ShiftPicker({
                             {reason}
                           </span>
                         ) : (
-                          <span>{preference ? "ביקש/ה את המשמרת הזו" : member.title}</span>
+                          <span>
+                            {preference
+                              ? "ביקש/ה את המשמרת הזו"
+                              : member.homeTeamName
+                                ? `מומחה תמיכה · ${member.homeTeamName}`
+                                : member.title}
+                          </span>
                         )}
                       </div>
                       <span className="badge tabular">
