@@ -94,3 +94,29 @@ export interface EmployeeSummary {
   minShifts: number;
   maxShifts: number;
 }
+
+export interface UpcomingShift {
+  weekStart: string;
+  dayIndex: number;
+  shiftType: ShiftType;
+  startsAt: string;
+}
+
+export interface EmployeeDashboardStats {
+  employeeName: string;
+  weekShiftCount: number;
+  weekHours: number;
+  monthShiftCount: number;
+  monthHours: number;
+  nextShift: UpcomingShift | null;
+}
+
+export interface SharedFile {
+  id: string;
+  uploadedByUserId: string | null;
+  uploadedByName: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}

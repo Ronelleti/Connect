@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { getRestWarnings } from "@/lib/shifts";
+import { getHandoverAvailabilityIssues } from "@/lib/availability";
+import { getRestIssues } from "@/lib/shifts";
+import type { AssignmentIssue } from "@/lib/types";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import {
   createSwapRequest,
   findAssignment,
-  listAssignments,
+  listAssignmentsAroundWeek,
+  listAvailabilityBlocks,
   listEmployees
 } from "@/server/repositories";
+import { notifySwapRequested } from "@/server/swapNotifications";
 
 export async function POST(request: Request) {
   const user = await requireApiUser();
@@ -53,8 +57,25 @@ export async function POST(request: Request) {
     return jsonError("The target shift must belong to the selected employee in the same week.");
   }
 
-  const assignments = await listAssignments(requesterAssignment.weekStart);
-  const targetWarnings = getRestWarnings(
+  const [assignments, availabilityBlocks] = await Promise.all([
+    listAssignmentsAroundWeek(requesterAssignment.weekStart),
+    listAvailabilityBlocks(requesterAssignment.weekStart)
+  ]);
+  const targetAvailability = getHandoverAvailabilityIssues(
+    availabilityBlocks,
+    targetEmployeeId,
+    requesterAssignment.dayIndex,
+    requesterAssignment.shiftType
+  );
+  const requesterAvailability = targetAssignment
+    ? getHandoverAvailabilityIssues(
+        availabilityBlocks,
+        requesterAssignment.employeeId,
+        targetAssignment.dayIndex,
+        targetAssignment.shiftType
+      )
+    : { errors: [], warnings: [] };
+  const targetRest = getRestIssues(
     {
       employeeId: targetEmployeeId,
       weekStart: requesterAssignment.weekStart,
@@ -62,14 +83,9 @@ export async function POST(request: Request) {
       shiftType: requesterAssignment.shiftType
     },
     assignments.filter((assignment) => assignment.id !== targetAssignmentId)
-  ).map((warning) => ({
-    ...warning,
-    code: `TARGET_${warning.code}`,
-    message: `${targetEmployee.name}: ${warning.message}`
-  }));
-
-  const requesterWarnings = targetAssignment
-    ? getRestWarnings(
+  );
+  const requesterRest = targetAssignment
+    ? getRestIssues(
         {
           employeeId: requesterAssignment.employeeId,
           weekStart: targetAssignment.weekStart,
@@ -77,16 +93,37 @@ export async function POST(request: Request) {
           shiftType: targetAssignment.shiftType
         },
         assignments.filter((assignment) => assignment.id !== requesterAssignment.id)
-      ).map((warning) => ({
-        ...warning,
-        code: `REQUESTER_${warning.code}`,
-        message: `${requesterEmployee?.name ?? "העובד המבקש"}: ${warning.message}`
-      }))
-    : [];
-  const warnings = [...targetWarnings, ...requesterWarnings];
+      )
+    : { errors: [], warnings: [] };
+  const labelTarget = (issue: AssignmentIssue) => ({
+    ...issue,
+    code: `TARGET_${issue.code}`,
+    message: `${targetEmployee.name}: ${issue.message}`
+  });
+  const labelRequester = (issue: AssignmentIssue) => ({
+    ...issue,
+    code: `REQUESTER_${issue.code}`,
+    message: `${requesterEmployee?.name ?? "העובד המבקש"}: ${issue.message}`
+  });
+  const errors = [
+    ...targetAvailability.errors.map(labelTarget),
+    ...targetRest.errors.map(labelTarget),
+    ...requesterAvailability.errors.map(labelRequester),
+    ...requesterRest.errors.map(labelRequester)
+  ];
+  const warnings = [
+    ...targetAvailability.warnings.map(labelTarget),
+    ...targetRest.warnings.map(labelTarget),
+    ...requesterAvailability.warnings.map(labelRequester),
+    ...requesterRest.warnings.map(labelRequester)
+  ];
+
+  if (errors.length > 0) {
+    return jsonError("Swap violates scheduling rules.", 409, { errors, warnings });
+  }
 
   if (warnings.length > 0 && body.acknowledgeWarnings !== true) {
-    return jsonError("Swap requires rest warning confirmation.", 409, {
+    return jsonError("Swap requires warning confirmation.", 409, {
       errors: [],
       warnings
     });
@@ -100,6 +137,8 @@ export async function POST(request: Request) {
   if (!swap) {
     return jsonError("כבר קיימת בקשת החלפה פעילה למשמרת הזו.", 409);
   }
+
+  await notifySwapRequested(swap);
 
   return NextResponse.json({ swap, validation: { errors: [], warnings } }, { status: 201 });
 }

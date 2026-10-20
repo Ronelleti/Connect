@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -11,25 +12,34 @@ import {
   ChevronRight,
   Clock3,
   Download,
+  FileText,
+  Inbox,
+  LayoutDashboard,
   LogOut,
   MessageSquare,
   Pencil,
   Plus,
   Repeat2,
   Search,
+  Send,
   Share2,
   ShieldAlert,
   Trash2,
   UserRound,
   UserPlus,
   UsersRound,
+  Wand2,
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AvailabilityConfirmBar } from "./AvailabilityConfirmBar";
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { AssignmentUndoToast } from "./AssignmentUndoToast";
+import { CurrentShiftBanner } from "./CurrentShiftBanner";
+import { InstallAppBanner, InstallAppButton } from "./InstallApp";
 import { EmployeeEditorDialog, type EmployeeEditor } from "./EmployeeEditorDialog";
 import { ShiftWorkerPicker } from "./ShiftWorkerPicker";
+import { NotificationBell } from "./NotificationBell";
 import { ThemeToggle } from "./ThemeToggle";
 import {
   availabilityStatusLabel,
@@ -59,6 +69,7 @@ import type {
 interface SchedulePayload {
   weekStart: string;
   availabilityWeekStart: string;
+  publishedAt: string | null;
   employees: Employee[];
   assignments: ShiftAssignment[];
   scheduleAvailabilityBlocks: AvailabilityBlock[];
@@ -105,6 +116,7 @@ type NavigationSection = "schedule" | "employees" | "notifications" | "swaps";
 const EMPTY_SCHEDULE: SchedulePayload = {
   weekStart: "",
   availabilityWeekStart: "",
+  publishedAt: null,
   employees: [],
   assignments: [],
   scheduleAvailabilityBlocks: [],
@@ -116,6 +128,13 @@ const EMPTY_SCHEDULE: SchedulePayload = {
 const AVAILABILITY_PAGE_SIZE = 5;
 const ASSIGNMENT_UNDO_DURATION_MS = 6000;
 const LIVE_SCHEDULE_REFRESH_MS = 10_000;
+
+const publishedTimeFormat = new Intl.DateTimeFormat("he-IL", {
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
 
 export function ScheduleDashboard({
   currentUser,
@@ -142,11 +161,19 @@ export function ScheduleDashboard({
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingEmployee, setIsSavingEmployee] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isGeneratingSchedule, setIsGeneratingSchedule] = useState(false);
+  const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const scheduleTableRef = useRef<HTMLDivElement>(null);
   const swapFormRef = useRef<HTMLFormElement>(null);
+  const [swapSourceId, setSwapSourceId] = useState("");
+  const [swapTargetEmployeeId, setSwapTargetEmployeeId] = useState("");
   const pendingAssignmentRemovalsRef = useRef(new Map<string, ShiftAssignment>());
 
   const days = useMemo(() => getScheduleDays(weekStart), [weekStart]);
+  const emptyShiftCount =
+    days.length * getShiftTypes().length -
+    new Set(schedule.assignments.map((assignment) => `${assignment.dayIndex}:${assignment.shiftType}`)).size;
   const availabilityDays = useMemo(
     () => getScheduleDays(initialAvailabilityWeekStart),
     [initialAvailabilityWeekStart]
@@ -188,6 +215,20 @@ export function ScheduleDashboard({
         ? schedule.assignments
         : schedule.assignments.filter((assignment) => assignment.employeeId === ownEmployee?.id),
     [currentUser.role, ownEmployee?.id, schedule.assignments]
+  );
+  const swapSourceAssignment = schedule.assignments.find(
+    (assignment) => assignment.id === swapSourceId
+  );
+  const swapTargetAssignments = useMemo(
+    () =>
+      swapSourceAssignment && swapTargetEmployeeId
+        ? schedule.assignments.filter(
+            (assignment) =>
+              assignment.employeeId === swapTargetEmployeeId &&
+              assignment.weekStart === swapSourceAssignment.weekStart
+          )
+        : [],
+    [schedule.assignments, swapSourceAssignment, swapTargetEmployeeId]
   );
   const unavailableEmployeesByCell = useMemo(
     () => groupUnavailableEmployees(
@@ -317,6 +358,66 @@ export function ScheduleDashboard({
     await loadSchedule();
   }
 
+  async function generateSchedule() {
+    if (isGeneratingSchedule) {
+      return;
+    }
+    setIsGeneratingSchedule(true);
+    const response = await fetch("/api/schedule/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weekStart })
+    });
+    const body = await response.json();
+    setIsGeneratingSchedule(false);
+
+    if (!response.ok) {
+      setToast(body.error ?? "יצירת הסידור האוטומטי נכשלה.");
+      return;
+    }
+
+    const createdCount = (body.created ?? []).length;
+    const relaxedCount = (body.relaxedRest ?? []).length;
+    const unfilledCount = (body.unfilled ?? []).length;
+    const messageParts = [
+      createdCount > 0 ? `נוצרו ${createdCount} שיבוצים אוטומטית.` : "לא נמצאו משמרות פנויות לשיבוץ."
+    ];
+    if (relaxedCount > 0) {
+      messageParts.push(`ב-${relaxedCount} מהן הוקל כלל המנוחה בגלל מחסור בעובדים זמינים.`);
+    }
+    if (unfilledCount > 0) {
+      messageParts.push(`${unfilledCount} משמרות נשארו פנויות ודורשות שיבוץ ידני.`);
+    }
+    setToast(messageParts.join(" "));
+    await loadSchedule();
+  }
+
+  async function publishSchedule() {
+    if (isPublishing) {
+      return;
+    }
+    setIsPublishing(true);
+    const response = await fetch("/api/schedule/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weekStart })
+    }).catch(() => null);
+    const body = response ? await response.json().catch(() => ({})) : {};
+    setIsPublishing(false);
+    setIsPublishConfirmOpen(false);
+
+    if (!response?.ok) {
+      setToast(body.error ?? "פרסום הסידור נכשל.");
+      return;
+    }
+    setToast(
+      body.wasPublished
+        ? `נשלח עדכון על הסידור ל-${body.notified} עובדים.`
+        : `הסידור פורסם ונשלחה התראה ל-${body.notified} עובדים.`
+    );
+    await loadSchedule();
+  }
+
   function stageAssignmentRemoval(assignment: ShiftAssignment) {
     if (assignmentRemoval.pending) {
       return;
@@ -394,6 +495,10 @@ export function ScheduleDashboard({
       requesterAssignmentId: String(formData.get("requesterAssignmentId") ?? ""),
       targetEmployeeId: String(formData.get("targetEmployeeId") ?? "")
     };
+    const targetAssignmentId = String(formData.get("targetAssignmentId") ?? "");
+    if (targetAssignmentId) {
+      submission.targetAssignmentId = targetAssignmentId;
+    }
     await submitSwap(submission);
   }
 
@@ -424,6 +529,8 @@ export function ScheduleDashboard({
         : "בקשת ההחלפה נשלחה."
     );
     swapFormRef.current?.reset();
+    setSwapSourceId("");
+    setSwapTargetEmployeeId("");
     await loadSchedule();
   }
 
@@ -551,6 +658,9 @@ export function ScheduleDashboard({
         <div className="rail-logo">
           <Image src="/wecom-logo.svg" alt="wecom" width={92} height={42} priority />
         </div>
+        <Link href="/" title="הדשבורד שלי" className="rail-button">
+          <LayoutDashboard size={20} />
+        </Link>
         <button
           title="לוח משמרות"
           className={`rail-button ${activeSection === "schedule" ? "active" : ""}`}
@@ -579,6 +689,12 @@ export function ScheduleDashboard({
         >
           <Repeat2 size={20} />
         </button>
+        <Link href="/requests" title="בקשות" className="rail-button">
+          <Inbox size={20} />
+        </Link>
+        <Link href="/files" title="קבצים" className="rail-button">
+          <FileText size={20} />
+        </Link>
       </aside>
 
       <div className="workspace">
@@ -603,6 +719,8 @@ export function ScheduleDashboard({
           </div>
           <div className="topbar-actions">
             <span className="trial-pill">ניהול משמרות</span>
+            <InstallAppButton />
+            <NotificationBell />
             <span className="user-pill">
               <UserRound size={18} />
               {currentUser.name}
@@ -615,6 +733,9 @@ export function ScheduleDashboard({
         </header>
 
         <main className="scheduler-page">
+          <InstallAppBanner />
+          <CurrentShiftBanner />
+
           <section className="schedule-toolbar" id="schedule-section">
             <div>
               <p className="eyebrow">Wecomconnect</p>
@@ -630,6 +751,38 @@ export function ScheduleDashboard({
               <button className="soft-button" onClick={() => setWeekStart(addDays(weekStart, 7))}>
                 <ChevronLeft size={18} />
               </button>
+              {currentUser.role === "MANAGER" ? (
+                <button
+                  className="export-button"
+                  onClick={generateSchedule}
+                  disabled={isGeneratingSchedule}
+                  title="שיבוץ אוטומטי של המשמרות הפנויות בשבוע זה"
+                >
+                  <Wand2 size={17} />
+                  {isGeneratingSchedule ? "יוצר סידור..." : "יצירת סידור אוטומטי"}
+                </button>
+              ) : null}
+              {currentUser.role === "MANAGER" ? (
+                <button
+                  className="export-button publish-button"
+                  onClick={() => setIsPublishConfirmOpen(true)}
+                  disabled={isLoading && schedule.weekStart !== weekStart}
+                  title={
+                    schedule.publishedAt
+                      ? `פורסם ב-${publishedTimeFormat.format(new Date(schedule.publishedAt))}`
+                      : "שליחת התראה לכל העובדים שהסידור לשבוע זה מוכן"
+                  }
+                >
+                  <Send size={17} />
+                  {schedule.publishedAt ? "שליחת עדכון על הסידור" : "פרסום הסידור"}
+                </button>
+              ) : null}
+              {currentUser.role === "MANAGER" && schedule.publishedAt && schedule.weekStart === weekStart ? (
+                <span className="published-pill">
+                  <Check size={15} />
+                  פורסם {publishedTimeFormat.format(new Date(schedule.publishedAt))}
+                </span>
+              ) : null}
               <button className="export-button" onClick={exportSchedule}>
                 <Download size={17} />
                 ייצוא טבלה
@@ -879,7 +1032,12 @@ export function ScheduleDashboard({
                   <h2>החלפות</h2>
                 </div>
                 <form className="compact-form" ref={swapFormRef} onSubmit={createSwap}>
-                  <select name="requesterAssignmentId" required defaultValue="">
+                  <select
+                    name="requesterAssignmentId"
+                    required
+                    value={swapSourceId}
+                    onChange={(event) => setSwapSourceId(event.target.value)}
+                  >
                     <option value="" disabled>
                       משמרת מקור
                     </option>
@@ -890,13 +1048,27 @@ export function ScheduleDashboard({
                       </option>
                     ))}
                   </select>
-                  <select name="targetEmployeeId" required defaultValue="">
+                  <select
+                    name="targetEmployeeId"
+                    required
+                    value={swapTargetEmployeeId}
+                    onChange={(event) => setSwapTargetEmployeeId(event.target.value)}
+                  >
                     <option value="" disabled>
                       עובד יעד
                     </option>
                     {schedule.employees.map((employee) => (
                       <option value={employee.id} key={employee.id}>
                         {employee.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select name="targetAssignmentId" key={`${swapSourceId}:${swapTargetEmployeeId}`} defaultValue="">
+                    <option value="">מסירת משמרת בלבד (בלי משמרת בחזרה)</option>
+                    {swapTargetAssignments.map((assignment) => (
+                      <option value={assignment.id} key={assignment.id}>
+                        החלפה ראש בראש: יום {assignment.dayIndex + 1} ·{" "}
+                        {SHIFT_DEFINITIONS[assignment.shiftType].label}
                       </option>
                     ))}
                   </select>
@@ -924,6 +1096,7 @@ export function ScheduleDashboard({
             </aside>
           </section>
 
+          {ownEmployee ? <AvailabilityConfirmBar /> : null}
           <AvailabilityPanel
             currentUser={currentUser}
             weekStart={initialAvailabilityWeekStart}
@@ -980,6 +1153,44 @@ export function ScheduleDashboard({
           durationMs={ASSIGNMENT_UNDO_DURATION_MS}
           onUndo={assignmentRemoval.undo}
         />
+      ) : null}
+      {isPublishConfirmOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="warning-dialog publish-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-title"
+          >
+            <div className="warning-dialog-icon"><Send size={22} /></div>
+            <div>
+              <h2 id="publish-title">
+                {schedule.publishedAt ? "שליחת עדכון על הסידור" : "פרסום הסידור"}{" "}
+                {formatHebrewDate(weekStart)}-{formatHebrewDate(addDays(weekStart, 6))}
+              </h2>
+              <p className="dialog-copy">
+                {schedule.publishedAt
+                  ? "כל העובדים יקבלו התראה שהסידור עודכן, עם המשמרות שלהם לשבוע זה."
+                  : "כל העובדים יקבלו התראה (באפליקציה ובטלפון) שהסידור מוכן, עם המשמרות שלהם לשבוע זה."}
+              </p>
+              {emptyShiftCount > 0 ? (
+                <p className="dialog-copy publish-warning">
+                  <AlertTriangle size={15} />
+                  {emptyShiftCount === 1 ? "משמרת אחת עדיין לא מאוישת." : `${emptyShiftCount} משמרות עדיין לא מאוישות.`}
+                </p>
+              ) : null}
+            </div>
+            <div className="warning-dialog-actions">
+              <button className="soft-action" onClick={() => setIsPublishConfirmOpen(false)} disabled={isPublishing}>
+                ביטול
+              </button>
+              <button className="primary-button publish-confirm" onClick={publishSchedule} disabled={isPublishing}>
+                <Send size={16} />
+                {isPublishing ? "שולח..." : schedule.publishedAt ? "שליחת עדכון" : "פרסום ושליחה"}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
       {pendingReplacement ? (
         <div className="modal-backdrop" role="presentation">

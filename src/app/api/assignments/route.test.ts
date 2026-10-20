@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireApiUser: vi.fn(),
   listEmployees: vi.fn(),
-  listAssignments: vi.fn(),
+  listAssignmentsAroundWeek: vi.fn(),
   listAvailabilityBlocks: vi.fn(),
   replaceAssignment: vi.fn()
 }));
@@ -19,7 +19,7 @@ vi.mock("@/server/api", async () => {
 });
 vi.mock("@/server/repositories", () => ({
   listEmployees: mocks.listEmployees,
-  listAssignments: mocks.listAssignments,
+  listAssignmentsAroundWeek: mocks.listAssignmentsAroundWeek,
   listAvailabilityBlocks: mocks.listAvailabilityBlocks,
   replaceAssignment: mocks.replaceAssignment
 }));
@@ -65,7 +65,7 @@ describe("single assignment per shift", () => {
     vi.clearAllMocks();
     mocks.requireApiUser.mockResolvedValue(manager);
     mocks.listEmployees.mockResolvedValue([employee]);
-    mocks.listAssignments.mockResolvedValue([occupied]);
+    mocks.listAssignmentsAroundWeek.mockResolvedValue([occupied]);
     mocks.listAvailabilityBlocks.mockResolvedValue([]);
     mocks.replaceAssignment.mockResolvedValue({ ...occupied, employeeId: employee.id });
   });
@@ -88,5 +88,38 @@ describe("single assignment per shift", () => {
       expect.objectContaining({ employeeId: employee.id }),
       occupied.id
     );
+  });
+
+  it("blocks a back-to-back shift, even across the week boundary", async () => {
+    // Previous week's Saturday night ends Sunday 07:00, exactly when this week's Sunday
+    // morning shift starts.
+    const saturdayNight = {
+      id: "assignment-prev",
+      employeeId: employee.id,
+      weekStart: "2026-08-02",
+      dayIndex: 6,
+      shiftType: "NIGHT",
+      notes: ""
+    };
+    mocks.listAssignmentsAroundWeek.mockResolvedValue([saturdayNight]);
+    const request = new Request("http://localhost/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        employeeId: employee.id,
+        weekStart: "2026-08-09",
+        dayIndex: 0,
+        shiftType: "MORNING",
+        acknowledgeWarnings: true
+      })
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      details: { errors: [{ code: "INSUFFICIENT_REST" }] }
+    });
+    expect(mocks.replaceAssignment).not.toHaveBeenCalled();
   });
 });

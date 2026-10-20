@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   SHIFT_DEFINITIONS,
   calculateSummaries,
-  getRestWarnings,
+  getCurrentShiftSlot,
+  getRestIssues,
+  getShiftStartInstant,
   validateAssignment
 } from "./shifts";
 import type { AvailabilityBlock, Employee, ShiftAssignment } from "./types";
@@ -58,7 +60,7 @@ describe("shift rules", () => {
     );
   });
 
-  it("warns but allows direct back-to-back shifts", () => {
+  it("blocks direct back-to-back shifts", () => {
     const validation = validateAssignment(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "EVENING" },
       employee,
@@ -66,10 +68,38 @@ describe("shift rules", () => {
       []
     );
 
-    expect(validation.errors).toHaveLength(0);
-    expect(validation.warnings).toContainEqual(
+    expect(validation.errors).toContainEqual(
       expect.objectContaining({ code: "INSUFFICIENT_REST" })
     );
+  });
+
+  it("blocks a back-to-back shift across the week boundary", () => {
+    const previousSaturdayNight = { ...assignment("1", 6, "NIGHT"), weekStart: "2026-07-12" };
+    const validation = validateAssignment(
+      { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "MORNING" },
+      employee,
+      [previousSaturdayNight],
+      []
+    );
+
+    expect(validation.errors).toContainEqual(
+      expect.objectContaining({ code: "INSUFFICIENT_REST" })
+    );
+  });
+
+  it("does not count other weeks' shifts toward the weekly limit", () => {
+    const previousWeek = [0, 1, 2, 3, 4, 5].map((day) => ({
+      ...assignment(`prev-${day}`, day, "MORNING"),
+      weekStart: "2026-07-12"
+    }));
+    const validation = validateAssignment(
+      { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 3, shiftType: "MORNING" },
+      employee,
+      previousWeek,
+      []
+    );
+
+    expect(validation.errors).toHaveLength(0);
   });
 
   it("warns when a night shift is followed by next-day evening shift", () => {
@@ -88,22 +118,24 @@ describe("shift rules", () => {
     );
   });
 
-  it("detects back-to-back rest warnings for a proposed shift swap", () => {
-    const warnings = getRestWarnings(
+  it("blocks a back-to-back shift for a proposed shift swap", () => {
+    const { errors } = getRestIssues(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 0, shiftType: "EVENING" },
       [assignment("1", 0, "MORNING")]
     );
 
-    expect(warnings).toContainEqual(
+    expect(errors).toContainEqual(
       expect.objectContaining({ code: "INSUFFICIENT_REST" })
     );
   });
 
   it("detects an 8-8 rest warning for a proposed shift swap", () => {
-    const warnings = getRestWarnings(
+    const { errors, warnings } = getRestIssues(
       { employeeId: employee.id, weekStart: "2026-07-19", dayIndex: 1, shiftType: "EVENING" },
       [assignment("1", 0, "NIGHT")]
     );
+
+    expect(errors).toHaveLength(0);
 
     expect(warnings).toContainEqual(
       expect.objectContaining({ code: "EIGHT_EIGHT_REST" })
@@ -187,6 +219,62 @@ describe("shift rules", () => {
 
     expect(validation.warnings).toContainEqual(
       expect.objectContaining({ code: "AVAILABILITY_BLOCKED" })
+    );
+  });
+
+  it("identifies the current shift slot from the time of day", () => {
+    // 2026-07-19 is a Sunday; Israel is UTC+3 in July.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T10:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "MORNING"
+    });
+    expect(getCurrentShiftSlot(new Date("2026-07-19T13:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "EVENING"
+    });
+    expect(getCurrentShiftSlot(new Date("2026-07-19T20:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "NIGHT"
+    });
+  });
+
+  it("keeps a night shift on its starting day after midnight rolls the calendar date over", () => {
+    // Local time is 2026-07-20T02:00, but the night shift started on Sunday 2026-07-19.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T23:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-19",
+      dayIndex: 0,
+      shiftType: "NIGHT"
+    });
+  });
+
+  it("carries a night shift across into the previous week when it starts on a Saturday", () => {
+    // Local time is 2026-07-19T03:00 (Sunday), but the night shift started on
+    // Saturday 2026-07-18, which belongs to the previous week.
+    expect(getCurrentShiftSlot(new Date("2026-07-19T00:00:00.000Z"))).toEqual({
+      weekStart: "2026-07-12",
+      dayIndex: 6,
+      shiftType: "NIGHT"
+    });
+  });
+
+  it("computes a shift's true real-world start instant, not a literal-UTC one", () => {
+    // 2026-07-19 is in Israel's DST (UTC+3): 07:00 local is 04:00 UTC, not 07:00 UTC.
+    expect(getShiftStartInstant("2026-07-19", 0, "MORNING").toISOString()).toBe(
+      "2026-07-19T04:00:00.000Z"
+    );
+    // 2026-01-04 is Israel standard time (UTC+2): 07:00 local is 05:00 UTC.
+    expect(getShiftStartInstant("2026-01-04", 0, "MORNING").toISOString()).toBe(
+      "2026-01-04T05:00:00.000Z"
+    );
+  });
+
+  it("rolls a shift start instant onto the correct absolute day", () => {
+    // Day index 2 on a Sunday week-start lands on Tuesday.
+    expect(getShiftStartInstant("2026-07-19", 2, "EVENING").toISOString()).toBe(
+      "2026-07-21T12:00:00.000Z"
     );
   });
 

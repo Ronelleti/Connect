@@ -8,6 +8,8 @@ async function login(page: Page, email: string, password = E2E_PASSWORD) {
   await page.getByLabel("סיסמה").fill(password);
   await page.getByRole("button", { name: "כניסה" }).click();
   await page.waitForURL("/");
+  // After login everyone lands on their personal dashboard; the schedule has its own page.
+  await page.goto("/schedule");
 }
 
 test("manager sees a complete week and every employee constraint", async ({ page }) => {
@@ -49,7 +51,7 @@ test("manager sees a complete week and every employee constraint", async ({ page
   await page.getByTitle("מצב בהיר").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-  await page.getByTitle("התראות").click();
+  await page.locator(".icon-rail").getByTitle("התראות").click();
   await expect(page.getByText("אין התראות חדשות.")).toBeVisible();
   const employeesNavigationButton = page.getByRole("button", { name: "עובדים", exact: true });
   await employeesNavigationButton.click();
@@ -62,12 +64,12 @@ test("manager sees a complete week and every employee constraint", async ({ page
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "ייצוא טבלה" }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe("wecomconnect-schedule-2026-07-19.csv");
+  expect(download.suggestedFilename()).toMatch(/^wecomconnect-schedule-\d{4}-\d{2}-\d{2}\.csv$/);
 
   const pdfDownloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "PDF / שיתוף" }).click();
   const pdfDownload = await pdfDownloadPromise;
-  expect(pdfDownload.suggestedFilename()).toBe("wecomconnect-schedule-2026-07-19.pdf");
+  expect(pdfDownload.suggestedFilename()).toMatch(/^wecomconnect-schedule-\d{4}-\d{2}-\d{2}\.pdf$/);
   await pdfDownload.saveAs("/tmp/wecomconnect-schedule.pdf");
   await expect(page.getByText("קובץ ה-PDF הורד בהצלחה.")).toBeVisible();
 

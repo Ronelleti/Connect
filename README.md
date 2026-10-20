@@ -43,9 +43,20 @@ The seed creates local manager and employee fixtures using `DEMO_PASSWORD`
 
 1. Connect this GitHub repository to a new Netlify project.
 2. In the project, open **Database** and initialize Netlify Database, or run `netlify database init --yes` from a linked checkout.
-3. Add a strong `AUTH_SECRET` under **Project configuration → Environment variables**.
-4. Deploy the branch. Netlify detects `@netlify/database`, provisions PostgreSQL, and applies the SQL files under `netlify/database/migrations/` before publishing.
-5. Create the first manager once with `npm run db:create-admin`, using the production database connection temporarily as `DATABASE_URL` and setting `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` locally.
+3. Add these under **Project configuration → Environment variables** (redeploy after any change; values only apply to deploys made after they're set):
+
+   | Variable | What it is | How to get it |
+   | --- | --- | --- |
+   | `AUTH_SECRET` | Signs and encrypts login sessions. Required. | Any long random value, e.g. `openssl rand -hex 32`. |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | The key pair that identifies this server to Apple's and Google's push services, for phone notifications. The private key is secret. | Run `npx web-push generate-vapid-keys` once, on any computer, and keep both values (e.g. in a password manager). Changing them later makes every user re-enable notifications from the bell. |
+   | `VAPID_SUBJECT` | A contact address sent to the push services with each notification; users never see it. | `mailto:` plus your email, e.g. `mailto:you@example.com`. |
+   | `CRON_SECRET` | A password the Sunday availability-reminder function sends to `/api/cron/availability-reminder`, so nobody else can trigger the reminder. Without it the reminder doesn't run. | Make one up, e.g. `openssl rand -hex 32`. Only needs to be set in Netlify. |
+   | `FILES_ACCESS_CODE` | The code everyone types once to open the Files page. Without it the page stays locked. | Choose it yourself. |
+
+   `DATABASE_URL` isn't needed on Netlify (Netlify Database provides the connection), and `URL` (the site address used by the scheduled function) is set by Netlify automatically.
+4. Deploy the branch. Netlify detects `@netlify/database`, provisions PostgreSQL, and applies the SQL files under `netlify/database/migrations/` before publishing. The scheduled reminder only runs on the published production deploy, not on branch or preview deploys.
+5. Create the first manager once with `npm run db:create-admin`, using the production database connection temporarily as `DATABASE_URL` and setting `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` locally. The demo accounts from `npm run db:seed` exist only locally; the seed script refuses to run in production.
+6. On each phone, open the Netlify address, install the app from the "התקנה" banner, sign in, and turn on notifications from the bell. An app installed from another address (e.g. a local tunnel) must be removed and installed again.
 
 Public registration is disabled. Managers create employee accounts from the dashboard;
 the first manager is bootstrapped once with the production-safe admin script.
@@ -56,13 +67,33 @@ the first manager is bootstrapped once with the production-safe admin script.
 - The availability panel always targets the Sunday-through-Saturday week two weeks ahead, independently of the schedule week being viewed.
 - Employees can receive up to 6 shifts per week.
 - Unmarked availability is treated as available. Employees can mark a shift as preferred or unavailable and can set a full-day vacation (`חופש`) status.
-- Availability conflicts and rest gaps of 8 hours or less require a manager warning confirmation but do not prevent an intentional assignment.
+- An employee must have at least 8 hours of rest between shifts: back-to-back shifts (or any gap under 8 hours) are blocked, including across the Saturday-night/Sunday-morning week boundary and in swap requests. Exactly 8 hours of rest (the "8-8" case) and availability conflicts require a manager warning confirmation but do not prevent an intentional assignment.
 - Weekly summaries show shift count and work hours per employee.
 - Every shift can contain only one employee. Replacing an occupied shift requires an explicit manager confirmation.
 - Assigned names are bold and colored by shift: morning green, evening yellow, and night red.
 - Managers can export a UTF-8 CSV table containing employee, day, date, shift, time, and weekly totals.
 - Swap requests can be reviewed by the target employee and manager in either order. A rejection closes the request immediately; after both approve, the assignment is applied automatically.
 - Only one active swap request is allowed per source assignment; older duplicate requests are closed automatically when the database is migrated.
+- Managers can auto-generate a week's schedule with one click. The generator only fills currently empty shifts (existing assignments are left untouched) and, for each empty shift, prefers an employee who marked it as preferred, honors `UNAVAILABLE`/`חופש` blocks, and never exceeds an employee's weekly shift cap. It aims for at least 16 hours of rest (two other shifts) between any two of an employee's shifts; only when no employee can otherwise cover a shift does it fall back to 8 hours of rest. It never schedules back-to-back shifts, including across the week boundary; if a shift can't be covered with at least 8 hours of rest, it is left unfilled. Any shift nobody can cover is left unfilled and reported for manual assignment.
+
+## Personal Dashboard and Shared Files
+
+- After login, employees land on a personal dashboard (`/`) showing their name, shift count and hours worked this week and this month, and their next upcoming shift. Managers without a linked employee record see a simplified version pointing them to the schedule. The full schedule grid moved to `/schedule`; navigate between the dashboard, schedule, and files from the icon rail.
+- `/files` is a shared library where any signed-in user can upload a PDF, Word (`.docx`), Excel (`.xlsx`/`.xlsm`), CSV, or text file (5MB limit) for everyone to view and download. A file can be deleted by whoever uploaded it or by any manager.
+- The Files page is gated behind a shared access code (`FILES_ACCESS_CODE`): every user must enter it once before they can view or download anything there. Entering it correctly unlocks the page for 30 days per browser. If the code isn't configured, the page stays locked for everyone rather than opening by default.
+
+## Notifications, Requests and the Phone App
+
+- **Notifications:** a bell in the top bar lists each user's notifications with an unread count. With `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` configured (generate them once with `npx web-push generate-vapid-keys`), users can also turn on phone/desktop push notifications from the bell.
+- **Install as an app:** the site ships a web app manifest, icons and a service worker, so it can be added to a phone's home screen and opens full screen. On iPhone, push notifications only work after "Add to Home Screen" (iOS 16.4+).
+  - On phones, the login page and every signed-in page show an "התקנה" banner (dismissible for 14 days); a phone icon in the top bar stays available after it's closed. Nothing is shown once the app runs from the home screen.
+  - On Android (Chrome, Samsung Internet) the button opens the browser's own install window when the browser offers one. Otherwise, and always on iPhone, it opens step-by-step instructions for the visitor's phone and browser: Safari, other iPhone browsers, Samsung Internet, Chrome, or a social app's built-in browser (which must be opened in a real browser first). Platform detection lives in `src/lib/installPlatform.ts`.
+  - The installed iPhone app keeps its own login, separate from Safari, so users sign in once more inside it.
+- **Publishing a week:** managers press "פרסום הסידור" on the schedule page when a week is ready (the confirmation warns about shifts still empty). Every active employee gets a notification, on the bell and as a phone notification, listing their own shifts that week; tapping it opens `/schedule?week=<Sunday>`. Pressing it again later ("שליחת עדכון על הסידור") sends an "updated schedule" notification. Published weeks are stored in `published_weeks`.
+- **Swaps:** the target employee is notified of a request; when they accept, the requester is told and managers are asked to approve; when a manager approves or declines, both employees are notified.
+- **Shift giveaways** (`/requests`): an employee offers one of their future shifts to everyone; another employee takes it (rest, weekly-limit and vacation rules apply); managers approve the handover. Each step notifies the people involved.
+- **Vacation requests** (`/requests`): employees request a date range; managers approve or decline. Approval marks every day as full-day vacation (`חופש`) and removes the employee's shifts on those days, leaving them empty for the manager to refill. Swaps and giveaways can't hand a shift to someone on a vacation day.
+- **Availability reminder:** every Sunday at 06:00 UTC the Netlify scheduled function `netlify/functions/availability-reminder.mts` reminds employees who haven't filled in the week that is open for availability (deadline: Tuesday). Employees count as done once they change any availability or press "סיימתי למלא". Requires `CRON_SECRET`.
 
 ## Security
 

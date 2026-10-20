@@ -4,6 +4,7 @@ import {
   findShiftAvailability,
   findTimeOff,
   getAssignmentAvailabilityHint,
+  getHandoverAvailabilityIssues,
   isUnavailableForShift
 } from "./availability";
 import type { AvailabilityBlock } from "./types";
@@ -47,5 +48,26 @@ describe("availability selectors", () => {
 
   it("labels full-day leave in Hebrew", () => {
     expect(availabilityStatusLabel("TIME_OFF")).toBe("חופש");
+  });
+
+  it("never hands a shift to someone on vacation, and warns for an unavailable shift", () => {
+    const unavailable: AvailabilityBlock = {
+      ...blocks[0],
+      id: "unavailable",
+      dayIndex: 2,
+      shiftType: "NIGHT",
+      status: "UNAVAILABLE"
+    };
+    const all = [...blocks, unavailable];
+
+    const vacation = getHandoverAvailabilityIssues(all, "employee-1", 1, "EVENING");
+    expect(vacation.errors).toContainEqual(expect.objectContaining({ code: "ON_VACATION" }));
+
+    const blocked = getHandoverAvailabilityIssues(all, "employee-1", 2, "NIGHT");
+    expect(blocked.errors).toHaveLength(0);
+    expect(blocked.warnings).toContainEqual(expect.objectContaining({ code: "AVAILABILITY_BLOCKED" }));
+
+    expect(getHandoverAvailabilityIssues(all, "employee-1", 0, "MORNING")).toEqual({ errors: [], warnings: [] });
+    expect(getHandoverAvailabilityIssues(all, "someone-else", 1, "EVENING")).toEqual({ errors: [], warnings: [] });
   });
 });

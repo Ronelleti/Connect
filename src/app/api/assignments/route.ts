@@ -3,7 +3,7 @@ import { validateAssignment } from "@/lib/shifts";
 import type { ShiftType } from "@/lib/types";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import {
-  listAssignments,
+  listAssignmentsAroundWeek,
   listAvailabilityBlocks,
   listEmployees,
   replaceAssignment
@@ -37,10 +37,13 @@ export async function POST(request: Request) {
     return jsonError("A valid employee, week, day, and shift are required.");
   }
 
-  const [existingAssignments, availabilityBlocks] = await Promise.all([
-    listAssignments(weekStart),
+  const [nearbyAssignments, availabilityBlocks] = await Promise.all([
+    listAssignmentsAroundWeek(weekStart),
     listAvailabilityBlocks(weekStart)
   ]);
+  const existingAssignments = nearbyAssignments.filter(
+    (assignment) => assignment.weekStart === weekStart.slice(0, 10)
+  );
   const occupiedAssignment = existingAssignments.find(
     (assignment) =>
       assignment.dayIndex === dayIndex && assignment.shiftType === shiftType
@@ -59,8 +62,8 @@ export async function POST(request: Request) {
   }
 
   const assignmentsForValidation = occupiedAssignment
-    ? existingAssignments.filter((assignment) => assignment.id !== occupiedAssignment.id)
-    : existingAssignments;
+    ? nearbyAssignments.filter((assignment) => assignment.id !== occupiedAssignment.id)
+    : nearbyAssignments;
   const validation = validateAssignment(
     { employeeId, weekStart, dayIndex, shiftType },
     employee,
