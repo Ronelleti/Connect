@@ -166,6 +166,8 @@ export function ScheduleDashboard({
   const [isPublishing, setIsPublishing] = useState(false);
   const scheduleTableRef = useRef<HTMLDivElement>(null);
   const swapFormRef = useRef<HTMLFormElement>(null);
+  const [swapSourceId, setSwapSourceId] = useState("");
+  const [swapTargetEmployeeId, setSwapTargetEmployeeId] = useState("");
   const pendingAssignmentRemovalsRef = useRef(new Map<string, ShiftAssignment>());
 
   const days = useMemo(() => getScheduleDays(weekStart), [weekStart]);
@@ -213,6 +215,20 @@ export function ScheduleDashboard({
         ? schedule.assignments
         : schedule.assignments.filter((assignment) => assignment.employeeId === ownEmployee?.id),
     [currentUser.role, ownEmployee?.id, schedule.assignments]
+  );
+  const swapSourceAssignment = schedule.assignments.find(
+    (assignment) => assignment.id === swapSourceId
+  );
+  const swapTargetAssignments = useMemo(
+    () =>
+      swapSourceAssignment && swapTargetEmployeeId
+        ? schedule.assignments.filter(
+            (assignment) =>
+              assignment.employeeId === swapTargetEmployeeId &&
+              assignment.weekStart === swapSourceAssignment.weekStart
+          )
+        : [],
+    [schedule.assignments, swapSourceAssignment, swapTargetEmployeeId]
   );
   const unavailableEmployeesByCell = useMemo(
     () => groupUnavailableEmployees(
@@ -479,6 +495,10 @@ export function ScheduleDashboard({
       requesterAssignmentId: String(formData.get("requesterAssignmentId") ?? ""),
       targetEmployeeId: String(formData.get("targetEmployeeId") ?? "")
     };
+    const targetAssignmentId = String(formData.get("targetAssignmentId") ?? "");
+    if (targetAssignmentId) {
+      submission.targetAssignmentId = targetAssignmentId;
+    }
     await submitSwap(submission);
   }
 
@@ -509,6 +529,8 @@ export function ScheduleDashboard({
         : "בקשת ההחלפה נשלחה."
     );
     swapFormRef.current?.reset();
+    setSwapSourceId("");
+    setSwapTargetEmployeeId("");
     await loadSchedule();
   }
 
@@ -1010,7 +1032,12 @@ export function ScheduleDashboard({
                   <h2>החלפות</h2>
                 </div>
                 <form className="compact-form" ref={swapFormRef} onSubmit={createSwap}>
-                  <select name="requesterAssignmentId" required defaultValue="">
+                  <select
+                    name="requesterAssignmentId"
+                    required
+                    value={swapSourceId}
+                    onChange={(event) => setSwapSourceId(event.target.value)}
+                  >
                     <option value="" disabled>
                       משמרת מקור
                     </option>
@@ -1021,13 +1048,27 @@ export function ScheduleDashboard({
                       </option>
                     ))}
                   </select>
-                  <select name="targetEmployeeId" required defaultValue="">
+                  <select
+                    name="targetEmployeeId"
+                    required
+                    value={swapTargetEmployeeId}
+                    onChange={(event) => setSwapTargetEmployeeId(event.target.value)}
+                  >
                     <option value="" disabled>
                       עובד יעד
                     </option>
                     {schedule.employees.map((employee) => (
                       <option value={employee.id} key={employee.id}>
                         {employee.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select name="targetAssignmentId" key={`${swapSourceId}:${swapTargetEmployeeId}`} defaultValue="">
+                    <option value="">מסירת משמרת בלבד (בלי משמרת בחזרה)</option>
+                    {swapTargetAssignments.map((assignment) => (
+                      <option value={assignment.id} key={assignment.id}>
+                        החלפה ראש בראש: יום {assignment.dayIndex + 1} ·{" "}
+                        {SHIFT_DEFINITIONS[assignment.shiftType].label}
                       </option>
                     ))}
                   </select>
