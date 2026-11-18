@@ -122,6 +122,8 @@ export function RequestsCenter({ currentUser }: { currentUser: User }) {
       });
       const body = await response.json().catch(() => ({}));
       return { ok: response.ok, body };
+    } catch {
+      return { ok: false, body: { error: "אין חיבור לשרת. בדקו את החיבור ונסו שוב." } };
     } finally {
       setBusyId(null);
     }

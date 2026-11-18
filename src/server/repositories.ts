@@ -354,6 +354,10 @@ export async function replaceAssignment(input: {
       return null;
     }
 
+    if (currentAssignment && currentAssignment.employee_id !== input.employeeId) {
+      await client.query(CLOSE_OPEN_REQUESTS_SQL, [currentAssignment.id]);
+    }
+
     const assignmentResult = currentAssignment
       ? await client.query<AssignmentRow>(
           `UPDATE shift_assignments
@@ -381,8 +385,31 @@ export async function replaceAssignment(input: {
   }
 }
 
+// Open swap requests and giveaways for a shift can't go through once the shift is deleted
+// or given to someone else, so they are closed instead of being left pending forever.
+const CLOSE_OPEN_REQUESTS_SQL = `
+  WITH closed_swaps AS (
+    UPDATE shift_swap_requests SET status = 'SUPERSEDED'
+    WHERE status IN ('PENDING_EMPLOYEE', 'PENDING_MANAGER')
+      AND (requester_assignment_id = $1 OR target_assignment_id = $1)
+    RETURNING id
+  )
+  UPDATE shift_giveaways SET status = 'CANCELLED', decided_at = now()
+  WHERE status IN ('OPEN', 'PENDING_MANAGER') AND assignment_id = $1`;
+
 export async function deleteAssignment(id: string) {
-  await query("DELETE FROM shift_assignments WHERE id = $1", [id]);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(CLOSE_OPEN_REQUESTS_SQL, [id]);
+    await client.query("DELETE FROM shift_assignments WHERE id = $1", [id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function bulkCreateAssignments(

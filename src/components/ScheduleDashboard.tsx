@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AvailabilityConfirmBar } from "./AvailabilityConfirmBar";
+import { ScheduleDayStrip } from "./ScheduleDayStrip";
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { AssignmentUndoToast } from "./AssignmentUndoToast";
 import { CurrentShiftBanner } from "./CurrentShiftBanner";
@@ -152,6 +153,7 @@ export function ScheduleDashboard({
   const [pendingAssignment, setPendingAssignment] = useState<PendingAssignment | null>(null);
   const [pendingReplacement, setPendingReplacement] = useState<PendingReplacement | null>(null);
   const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
+  const [isSubmittingSwap, setIsSubmittingSwap] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSection, setActiveSection] = useState<NavigationSection>("schedule");
   const [isAvailabilityFilterOpen, setIsAvailabilityFilterOpen] = useState(false);
@@ -327,13 +329,13 @@ export function ScheduleDashboard({
         replaceAssignmentId
       })
     });
-    const body = await response.json();
+    const body = await readJson(response);
 
     if (!response.ok) {
       const warnings = (body.details?.warnings ?? []).map(
         (warning: { message: string }) => warning.message
       );
-      if (warnings.length > 0 && !(body.details?.errors?.length > 0)) {
+      if (!acknowledgeWarnings && warnings.length > 0 && !(body.details?.errors?.length > 0)) {
         setPendingAssignment({
           employeeId,
           dayIndex,
@@ -343,6 +345,8 @@ export function ScheduleDashboard({
         });
         return;
       }
+      // A final answer: close any warning window and say why it didn't go through.
+      setPendingAssignment(null);
       setToast(body.details?.errors?.[0]?.message ?? body.error ?? "השיבוץ נכשל.");
       return;
     }
@@ -368,7 +372,7 @@ export function ScheduleDashboard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ weekStart })
     });
-    const body = await response.json();
+    const body = await readJson(response);
     setIsGeneratingSchedule(false);
 
     if (!response.ok) {
@@ -503,29 +507,45 @@ export function ScheduleDashboard({
   }
 
   async function submitSwap(submission: SwapSubmission, acknowledgeWarnings = false) {
-    const response = await fetch("/api/swaps", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...submission, acknowledgeWarnings })
-    });
+    if (isSubmittingSwap) {
+      return;
+    }
+    setIsSubmittingSwap(true);
+    let response: Response;
+    try {
+      response = await fetch("/api/swaps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...submission, acknowledgeWarnings })
+      });
+    } catch {
+      setPendingSwap(null);
+      setToast("אין חיבור לשרת. בדקו את החיבור ונסו שוב.");
+      setIsSubmittingSwap(false);
+      return;
+    }
+    setIsSubmittingSwap(false);
 
-    const body = await response.json();
+    const body = await readJson(response);
     if (!response.ok) {
       const warnings = (body.details?.warnings ?? []).map(
         (warning: { message: string }) => warning.message
       );
-      if (warnings.length > 0 && !(body.details?.errors?.length > 0)) {
+      if (!acknowledgeWarnings && warnings.length > 0 && !(body.details?.errors?.length > 0)) {
         setPendingSwap({ submission, warnings });
         return;
       }
-      setToast(body.details?.errors?.[0]?.message ?? body.error ?? "בקשת ההחלפה נכשלה.");
+      // A final answer: close the warning window and say why it didn't go through.
+      setPendingSwap(null);
+      setToast(body.details?.errors?.[0]?.message ?? body.error ?? "בקשת ההחלפה נכשלה. נסו שוב.");
+      await loadSchedule();
       return;
     }
 
     setPendingSwap(null);
     setToast(
       acknowledgeWarnings
-        ? "בקשת ההחלפה נשלחה לאחר אישור אזהרת 8–8."
+        ? "בקשת ההחלפה נשלחה לאחר אישור האזהרה."
         : "בקשת ההחלפה נשלחה."
     );
     swapFormRef.current?.reset();
@@ -540,7 +560,7 @@ export function ScheduleDashboard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action })
     });
-    const body = await response.json();
+    const body = await readJson(response);
     setToast(
       response.ok
         ? swapDecisionMessage(body.swap as ShiftSwapRequest)
@@ -613,7 +633,7 @@ export function ScheduleDashboard({
         body: JSON.stringify(payload)
       }
     );
-    const body = await response.json();
+    const body = await readJson(response);
     setIsSavingEmployee(false);
     if (!response.ok) {
       setToast(body.error ?? "שמירת העובד נכשלה.");
@@ -629,7 +649,7 @@ export function ScheduleDashboard({
       return;
     }
     const response = await fetch(`/api/employees/${employeeToDelete.id}`, { method: "DELETE" });
-    const body = await response.json();
+    const body = await readJson(response);
     if (!response.ok) {
       setToast(body.error ?? "מחיקת העובד נכשלה.");
       return;
@@ -799,6 +819,7 @@ export function ScheduleDashboard({
           </section>
 
           <section className="main-grid">
+            <ScheduleDayStrip days={days} panelRef={scheduleTableRef} />
             <div
               className="schedule-panel"
               ref={scheduleTableRef}
@@ -1272,21 +1293,24 @@ export function ScheduleDashboard({
           >
             <div className="warning-dialog-icon"><AlertTriangle size={22} /></div>
             <div>
-              <h2 id="swap-warning-title">אזהרת משמרות רצופות (8–8)</h2>
+              <h2 id="swap-warning-title">לשלוח את ההחלפה למרות האזהרה?</h2>
               <p className="dialog-copy">
-                ההחלפה עלולה ליצור משמרת אחרי משמרת או מנוחה של 8 שעות בלבד.
+                ההחלפה אפשרית, אבל כדאי לשים לב:
               </p>
               <ul>
                 {pendingSwap.warnings.map((warning) => <li key={warning}>{warning}</li>)}
               </ul>
             </div>
             <div className="warning-dialog-actions">
-              <button className="soft-action" onClick={() => setPendingSwap(null)}>ביטול</button>
+              <button className="soft-action" onClick={() => setPendingSwap(null)} disabled={isSubmittingSwap}>
+                ביטול
+              </button>
               <button
                 className="warning-action"
                 onClick={() => submitSwap(pendingSwap.submission, true)}
+                disabled={isSubmittingSwap}
               >
-                שלח בכל זאת
+                {isSubmittingSwap ? "שולח..." : "שלח בכל זאת"}
               </button>
             </div>
           </section>
@@ -1559,4 +1583,10 @@ function formatSwapCreatedAt(createdAt: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(createdAt));
+}
+
+// Error responses can have an empty body (e.g. a server crash); treat that as "no details"
+// instead of throwing, so dialogs still close and a message is still shown.
+async function readJson(response: Response) {
+  return response.json().catch(() => ({}));
 }

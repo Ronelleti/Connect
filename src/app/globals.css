@@ -3195,3 +3195,112 @@ html[data-theme="dark"] {
   min-height: 38px;
   padding: 0 16px;
 }
+
+/* Phone-only day strip above the weekly schedule (see ScheduleDayStrip). */
+.schedule-day-strip {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  /* The phone top bar is tall (search + two rows of buttons); pinned, it covered the
+     schedule and swallowed swipes that started on it. */
+  .topbar {
+    position: static;
+  }
+
+  .schedule-day-strip {
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    margin: 0 -14px;
+    padding: 8px 14px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .schedule-day-strip button {
+    min-height: 46px;
+    display: grid;
+    place-items: center;
+    gap: 1px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--muted);
+    padding: 4px 0;
+    font-size: 11px;
+  }
+
+  .schedule-day-strip button strong {
+    color: var(--ink);
+    font-size: 14px;
+  }
+
+  .schedule-day-strip button.today {
+    border-color: var(--blue);
+  }
+
+  .schedule-day-strip button.visible {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+  }
+
+  .schedule-day-strip button.visible strong {
+    color: #fff;
+  }
+
+  /* Two whole days per screen, a pinned narrow shift column, and swipes that always
+     stop exactly on a day. */
+  .schedule-panel {
+    --mobile-label-width: 74px;
+    --mobile-day-width: calc((100vw - 32px - var(--mobile-label-width)) / 2);
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline-start: var(--mobile-label-width);
+    overscroll-behavior-x: contain;
+  }
+
+  .schedule-panel .grid-header,
+  .schedule-panel .shift-row {
+    min-width: 0;
+    width: max-content;
+    grid-template-columns: var(--mobile-label-width) repeat(7, var(--mobile-day-width));
+  }
+
+  .schedule-panel .day-header,
+  .schedule-panel .shift-cell {
+    scroll-snap-align: start;
+  }
+
+  .schedule-panel .shift-label-column,
+  .schedule-panel .shift-name {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 3;
+  }
+
+  .schedule-panel .shift-label-column {
+    font-size: 13px;
+    padding: 10px 6px;
+  }
+
+  .schedule-panel .shift-name {
+    padding: 10px 8px;
+    gap: 4px;
+  }
+
+  .schedule-panel .shift-name strong {
+    font-size: 14px;
+  }
+
+  .schedule-panel .shift-name span {
+    font-size: 11px;
+  }
+
+  .schedule-panel .shift-cell {
+    padding: 8px;
+  }
+}
