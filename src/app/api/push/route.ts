@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { isApiError, jsonError, requireApiUser } from "@/server/api";
 import {
+  countPushSubscriptions,
   deletePushSubscription,
-  getVapidPublicKey,
+  getPushConfig,
   savePushSubscription
 } from "@/server/notifications";
 
@@ -11,7 +12,13 @@ export async function GET() {
   if (isApiError(user)) {
     return user;
   }
-  return NextResponse.json({ publicKey: getVapidPublicKey() });
+  const config = getPushConfig();
+  return NextResponse.json({
+    publicKey: config.ok ? config.publicKey : null,
+    // What is wrong with the server's push settings (never includes a key's value).
+    problem: config.ok ? null : config.problem,
+    deviceCount: await countPushSubscriptions(user.id)
+  });
 }
 
 export async function POST(request: Request) {

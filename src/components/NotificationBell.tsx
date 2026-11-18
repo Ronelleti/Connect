@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, BellRing, CheckCheck, X } from "lucide-react";
+import { Bell, BellRing, CheckCheck, Send, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -13,7 +13,20 @@ interface AppNotification {
   createdAt: string;
 }
 
-type PushState = "unsupported" | "ios-needs-install" | "not-configured" | "off" | "on" | "denied";
+type PushState =
+  | "unsupported"
+  | "ios-needs-install"
+  | "not-configured"
+  | "off"
+  | "on"
+  | "denied"
+  | "error";
+
+// The device's push state plus, for "not-configured" and "error", what went wrong.
+interface PushStatus {
+  state: PushState;
+  message?: string;
+}
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -29,8 +42,9 @@ export function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [pushState, setPushState] = useState<PushState>("unsupported");
+  const [pushStatus, setPushStatus] = useState<PushStatus>({ state: "unsupported" });
   const [pushBusy, setPushBusy] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -63,9 +77,11 @@ export function NotificationBell() {
   useEffect(() => {
     let cancelled = false;
     async function detectPushState() {
-      const state = await getPushState();
+      const status = await getPushState().catch(
+        (error: Error): PushStatus => ({ state: "error", message: error.message })
+      );
       if (!cancelled) {
-        setPushState(state);
+        setPushStatus(status);
       }
     }
     void detectPushState();
@@ -113,8 +129,25 @@ export function NotificationBell() {
 
   async function enablePush() {
     setPushBusy(true);
+    setTestResult(null);
     try {
-      setPushState(await subscribeToPush());
+      setPushStatus(await subscribeToPush());
+    } catch (error) {
+      setPushStatus({ state: "error", message: (error as Error).message });
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function sendTest() {
+    setPushBusy(true);
+    setTestResult(null);
+    try {
+      const response = await fetch("/api/push/test", { method: "POST" });
+      const body = await response.json().catch(() => ({}));
+      setTestResult(describeTestResult(response.ok, body));
+    } catch (error) {
+      setTestResult(`שליחת הבדיקה נכשלה: ${(error as Error).message}`);
     } finally {
       setPushBusy(false);
     }
@@ -148,7 +181,13 @@ export function NotificationBell() {
             </div>
           </div>
 
-          <PushPrompt state={pushState} busy={pushBusy} onEnable={enablePush} />
+          <PushPrompt
+            status={pushStatus}
+            busy={pushBusy}
+            onEnable={enablePush}
+            onTest={sendTest}
+            testResult={testResult}
+          />
 
           <div className="notification-list">
             {notifications.length === 0 ? (
@@ -174,20 +213,30 @@ export function NotificationBell() {
 }
 
 function PushPrompt({
-  state,
+  status,
   busy,
-  onEnable
+  onEnable,
+  onTest,
+  testResult
 }: {
-  state: PushState;
+  status: PushStatus;
   busy: boolean;
   onEnable: () => void;
+  onTest: () => void;
+  testResult: string | null;
 }) {
-  if (state === "off") {
+  const { state, message } = status;
+  if (state === "off" || state === "error") {
     return (
-      <button className="notification-push-button" onClick={onEnable} disabled={busy}>
-        <BellRing size={16} />
-        {busy ? "מפעיל..." : "הפעלת התראות בטלפון / במחשב"}
-      </button>
+      <>
+        <button className="notification-push-button" onClick={onEnable} disabled={busy}>
+          <BellRing size={16} />
+          {busy ? "מפעיל..." : state === "error" ? "ניסיון חוזר להפעלת התראות" : "הפעלת התראות בטלפון / במחשב"}
+        </button>
+        {state === "error" ? (
+          <p className="notification-push-hint">הפעלת ההתראות נכשלה: {message}</p>
+        ) : null}
+      </>
     );
   }
   if (state === "ios-needs-install") {
@@ -200,20 +249,51 @@ function PushPrompt({
   }
   if (state === "denied") {
     return (
-      <p className="notification-push-hint">ההתראות חסומות בדפדפן. אפשר לאפשר אותן בהגדרות האתר.</p>
+      <p className="notification-push-hint">
+        ההתראות חסומות במכשיר הזה. באייפון: הגדרות ← התראות ← Wecom. באנדרואיד: הגדרות האתר או
+        האפליקציה ← התראות.
+      </p>
     );
   }
   if (state === "on") {
-    return <p className="notification-push-hint">התראות בטלפון / במחשב פעילות במכשיר זה.</p>;
+    return (
+      <>
+        <p className="notification-push-hint">התראות בטלפון / במחשב פעילות במכשיר זה.</p>
+        <button className="notification-push-button" onClick={onTest} disabled={busy}>
+          <Send size={16} />
+          {busy ? "שולח..." : "שליחת התראת בדיקה"}
+        </button>
+        {testResult ? <p className="notification-push-hint">{testResult}</p> : null}
+      </>
+    );
   }
   if (state === "not-configured") {
     return (
       <p className="notification-push-hint">
-        התראות לטלפון עדיין לא הוגדרו במערכת (חסרים מפתחות VAPID בשרת). ההתראות יופיעו כאן בינתיים.
+        התראות לטלפון לא פעילות בשרת. ההתראות יופיעו כאן בינתיים.
+        {message ? <><br />פרטים למנהל המערכת: {message}</> : null}
       </p>
     );
   }
   return null;
+}
+
+function describeTestResult(
+  ok: boolean,
+  body: { error?: string; sent?: number; failed?: { statusCode: number | null; message: string }[]; removed?: number }
+) {
+  if (!ok) {
+    return `שליחת הבדיקה נכשלה: ${body.error ?? "שגיאת שרת"}`;
+  }
+  const failed = body.failed ?? [];
+  if (failed.length > 0) {
+    const first = failed[0];
+    return `שירות ההתראות דחה את השליחה (${first.statusCode ?? "ללא קוד"}): ${first.message}`;
+  }
+  if (!body.sent) {
+    return "לא נמצא מכשיר רשום. סגרו ופתחו את האפליקציה ונסו שוב.";
+  }
+  return `נשלחה התראת בדיקה ל-${body.sent} מכשירים. אם היא לא הופיעה תוך דקה, בדקו שההתראות מותרות בהגדרות המכשיר.`;
 }
 
 function isIos() {
@@ -227,46 +307,104 @@ function isStandalone() {
   );
 }
 
-async function getPushState(): Promise<PushState> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-    return isIos() && !isStandalone() ? "ios-needs-install" : "unsupported";
-  }
-  const response = await fetch("/api/push", { cache: "no-store" }).catch(() => null);
-  const { publicKey } = response?.ok ? await response.json() : { publicKey: null };
-  if (!publicKey) {
-    return "not-configured";
-  }
-  if (Notification.permission === "denied") {
-    return "denied";
-  }
-  const registration = await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.getSubscription();
-  return subscription && Notification.permission === "granted" ? "on" : "off";
+const PUSH_SETUP_TIMEOUT_MS = 20_000;
+
+// The browser's push setup can hang forever (e.g. no connection to Apple's or Google's push
+// service); give up with a clear message instead of leaving "מפעיל..." on screen.
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => window.setTimeout(() => reject(new Error(message)), PUSH_SETUP_TIMEOUT_MS))
+  ]);
 }
 
-async function subscribeToPush(): Promise<PushState> {
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    return permission === "denied" ? "denied" : "off";
-  }
-  const response = await fetch("/api/push", { cache: "no-store" });
-  const { publicKey } = await response.json();
-  if (!publicKey) {
-    return "not-configured";
-  }
-  const registration = await navigator.serviceWorker.ready;
-  const subscription =
-    (await registration.pushManager.getSubscription()) ??
-    (await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey)
-    }));
-  const saved = await fetch("/api/push", {
+function serviceWorkerReady() {
+  return withTimeout(
+    navigator.serviceWorker.ready,
+    "רכיב ההתראות של האפליקציה לא נטען. סגרו ופתחו את האפליקציה ונסו שוב."
+  );
+}
+
+async function fetchServerPush(): Promise<{ publicKey: string | null; problem: string | null }> {
+  const response = await fetch("/api/push", { cache: "no-store" }).catch(() => null);
+  const body = response?.ok ? await response.json() : {};
+  return { publicKey: body.publicKey ?? null, problem: body.problem ?? null };
+}
+
+async function saveSubscription(subscription: PushSubscription) {
+  const response = await fetch("/api/push", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(subscription.toJSON())
   });
-  return saved.ok ? "on" : "off";
+  return response.ok;
+}
+
+// True when the subscription was made with this server key. One made with an earlier key
+// (before the keys were set or after they changed) is rejected by the push services.
+function usesKey(subscription: PushSubscription, publicKey: string) {
+  const current = subscription.options?.applicationServerKey;
+  if (!current) {
+    return true;
+  }
+  const expected = urlBase64ToUint8Array(publicKey);
+  const actual = new Uint8Array(current);
+  return actual.length === expected.length && actual.every((byte, index) => byte === expected[index]);
+}
+
+async function getPushState(): Promise<PushStatus> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    return { state: isIos() && !isStandalone() ? "ios-needs-install" : "unsupported" };
+  }
+  const { publicKey, problem } = await fetchServerPush();
+  if (!publicKey) {
+    return { state: "not-configured", message: problem ?? undefined };
+  }
+  if (Notification.permission === "denied") {
+    return { state: "denied" };
+  }
+  const registration = await serviceWorkerReady();
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription || Notification.permission !== "granted") {
+    return { state: "off" };
+  }
+  if (!usesKey(subscription, publicKey)) {
+    await subscription.unsubscribe();
+    return { state: "off" };
+  }
+  // Re-register on every visit so the server always has this device, even if its record
+  // was lost or the earlier save failed.
+  return { state: (await saveSubscription(subscription)) ? "on" : "off" };
+}
+
+async function subscribeToPush(): Promise<PushStatus> {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    return { state: permission === "denied" ? "denied" : "off" };
+  }
+  const { publicKey, problem } = await fetchServerPush();
+  if (!publicKey) {
+    return { state: "not-configured", message: problem ?? undefined };
+  }
+  const registration = await serviceWorkerReady();
+  const existing = await registration.pushManager.getSubscription();
+  if (existing && !usesKey(existing, publicKey)) {
+    await existing.unsubscribe();
+  }
+  const subscription =
+    existing && usesKey(existing, publicKey)
+      ? existing
+      : await withTimeout(
+          registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          }),
+          "אין חיבור לשירות ההתראות של הטלפון. בדקו את החיבור לאינטרנט ונסו שוב."
+        );
+  if (!(await saveSubscription(subscription))) {
+    return { state: "error", message: "השרת לא שמר את המכשיר. נסו שוב." };
+  }
+  return { state: "on" };
 }
 
 function urlBase64ToUint8Array(base64: string) {
